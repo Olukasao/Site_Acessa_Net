@@ -41,7 +41,7 @@ describe("OwnershipService (isolamento cross-tenant)", () => {
       status: "ACTIVE"
     });
     const contractB = store.upsertContract({
-      id: "26983",
+      id: "90083",
       customerId: customerB.id,
       addressLine: "Rua B, 200",
       city: "Cidade B",

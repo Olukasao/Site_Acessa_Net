@@ -7,7 +7,7 @@ import { mapSgpCustomer } from "../src/integrations/sgp/sgpMapper.js";
  * Um cliente sem nenhum contrato aninhado (ex.: cadastro de teste) tinha seu
  * PROPRIO id de cliente erroneamente tratado como "contractId" -- e esse id
  * podia colidir com o contratoId real de OUTRO cliente. Caso real: cliente
- * id 34007 (sem contrato algum) colidiu com o contratoId 34007, que
+ * id 90007 (sem contrato algum) colidiu com o contratoId 90007, que
  * pertencia a um cliente completamente diferente -- o contrato "fantasma"
  * aparecia na Central e, ao ser consultado, trazia endereco/plano/fatura do
  * outro cliente.
@@ -40,7 +40,7 @@ describe("mapSgpCustomer (isolamento de contratos)", () => {
       },
       {
         // Cadastro de teste/incompleto -- tem CPF valido, mas nenhum contrato de verdade.
-        id: 34007,
+        id: 90007,
         nome: "Cliente Teste Sem Contrato",
         cpfcnpj: "395.813.238-30",
         contratos: []
@@ -50,16 +50,16 @@ describe("mapSgpCustomer (isolamento de contratos)", () => {
     const mapped = mapSgpCustomer(CPF, rawClientes);
 
     expect(mapped?.contracts.map((c) => c.id)).toEqual(["19754"]);
-    expect(mapped?.contracts.some((c) => c.id === "34007")).toBe(false);
+    expect(mapped?.contracts.some((c) => c.id === "90007")).toBe(false);
   });
 
   it("CENARIO DE COLISAO: o id de cliente sem contrato nunca aparece, mesmo quando numericamente igual a um contrato real de outro cliente", () => {
-    // Simula exatamente o caso real: id de cliente 34007 (sem contrato) colide
-    // com um contratoId 34007 que pertenceria a outra pessoa em outro lugar do
-    // SGP. O mapeamento deste CPF nunca pode produzir "34007" como contrato.
+    // Simula exatamente o caso real: id de cliente 90007 (sem contrato) colide
+    // com um contratoId 90007 que pertenceria a outra pessoa em outro lugar do
+    // SGP. O mapeamento deste CPF nunca pode produzir "90007" como contrato.
     const rawClientes = [
       {
-        id: 34007,
+        id: 90007,
         nome: "Cliente Teste Sem Contrato",
         cpfcnpj: "395.813.238-30",
         contratos: []
@@ -89,8 +89,8 @@ describe("mapSgpCustomer (isolamento de contratos)", () => {
   it("DEFESA EXTRA: rejeita um registro de contrato 'chato' cujo cpf proprio NAO bate com o CPF pesquisado", () => {
     const rawContratos = [
       {
-        contratoId: 34007,
-        clienteId: 26983,
+        contratoId: 90007,
+        clienteId: 90083,
         cpfCnpj: "418.827.978-84", // CPF de outra pessoa, nao do CPF pesquisado (39581323830)
         servico_plano: "Plano de outro cliente"
       }

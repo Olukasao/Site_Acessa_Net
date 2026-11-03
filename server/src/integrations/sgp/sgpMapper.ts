@@ -65,13 +65,13 @@ export function mapSgpCustomer(documento: string, contracts: SgpContractRaw[], i
    * chave "contratos", mesmo vazia) e SEMPRE um CLIENTE, nunca um contrato
    * -- so os itens DENTRO de "contratos" sao contratos de verdade. Antes,
    * quando um cliente nao tinha nenhum contrato aninhado (ex.: cadastro de
-   * teste "PATRICIA TESTE", id de cliente 34007, sem contrato nenhum), o
-   * codigo caia num fallback que tratava o PROPRIO registro de cliente como
-   * se fosse um contrato, usando o id do CLIENTE (34007) como "contractId".
-   * Esse id colidiu com um contratoId real de OUTRO cliente (34007 =
-   * contrato de Renan da Silva Santos, clienteId 26983) -- resultado:
-   * Patricia via um "contrato 34007" na propria Central que, ao ser
-   * consultado por id, trazia endereco/plano/fatura/conexao do Renan.
+   * teste, id de cliente 90007, sem contrato nenhum), o codigo caia num
+   * fallback que tratava o PROPRIO registro de cliente como se fosse um
+   * contrato, usando o id do CLIENTE (90007) como "contractId". Esse id
+   * colidiu com um contratoId real de OUTRO cliente (90007 = contrato de
+   * outra pessoa, com clienteId diferente) -- resultado: o cadastro de teste
+   * via um "contrato 90007" na propria Central que, ao ser consultado por id,
+   * trazia endereco/plano/fatura/conexao do outro cliente.
    *
    * Registros SEM a chave "contratos" vem de um endpoint diferente
    * (/api/ura/consultacliente/, usado como fallback de busca por CPF, e
