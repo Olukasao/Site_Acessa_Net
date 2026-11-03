@@ -44,3 +44,23 @@ describe("getClientConnectionStatus", () => {
     expect(result.deviceCount).toBe(2);
   });
 });
+
+describe("status do equipamento: online so quando a OLT diz online", () => {
+  it("valores desconhecidos (Ativo, active, vazio) nunca viram ONLINE", async () => {
+    const { getClientConnectionStatus } = await import("../src/integrations/oltcloud/oltClientConnectionStatus.js");
+    for (const status of ["Ativo", "active", "provisioned", "", "unknown"]) {
+      const client = { listEquipment: async () => [{ external_client_contract_id: "3005", status }] } as never;
+      expect((await getClientConnectionStatus(client, "3005")).status).toBe("UNKNOWN");
+    }
+  });
+
+  it("LOS / dying gasp contam como offline; um online e um desconhecido ficam desconhecidos", async () => {
+    const { getClientConnectionStatus } = await import("../src/integrations/oltcloud/oltClientConnectionStatus.js");
+    for (const status of ["LOS", "Dying Gasp", "offline"]) {
+      const client = { listEquipment: async () => [{ external_client_contract_id: "3005", status }] } as never;
+      expect((await getClientConnectionStatus(client, "3005")).status).toBe("OFFLINE");
+    }
+    const mixed = { listEquipment: async () => [{ external_client_contract_id: "3005", status: "Online" }, { external_client_contract_id: "3005", status: "Ativo" }] } as never;
+    expect((await getClientConnectionStatus(mixed, "3005")).status).toBe("UNKNOWN");
+  });
+});

@@ -17,6 +17,8 @@ class PageBoundary extends Component {
 
   componentDidCatch(error) {
     console.error("Falha ao carregar página AcessaNet", error);
+    // O app Android escuta este evento para relatar o erro (src/native/crashReporter.js); no site ninguém escuta.
+    window.dispatchEvent(new CustomEvent("acessanet:render-error", { detail: error }));
   }
 
   render() {

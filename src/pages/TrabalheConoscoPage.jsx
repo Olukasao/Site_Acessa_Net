@@ -10,7 +10,7 @@ import "./institucional.css";
 // painel admin, aba "Currículos" (/admin/curriculos).
 const areas = ["Suporte Técnico", "Instalador", "Atendimento", "Administrativo", "Outra"];
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
-const ACCEPTED = [".pdf", ".doc", ".docx"];
+const ACCEPTED = [".pdf", ".docx"];
 
 const perks = [
   { icon: Rocket, title: "Crescimento profissional", text: "Ambiente focado em evolução e aprendizado constante." },
@@ -31,7 +31,7 @@ function readAsBase64(file) {
 
 function fileProblem(file) {
   const name = file.name.toLowerCase();
-  if (!ACCEPTED.some((ext) => name.endsWith(ext))) return "Envie o currículo em PDF, DOC ou DOCX.";
+  if (!ACCEPTED.some((ext) => name.endsWith(ext))) return "Envie o currículo em PDF ou DOCX.";
   if (file.size > MAX_FILE_BYTES) return "O arquivo deve ter no máximo 5 MB.";
   return "";
 }
@@ -75,7 +75,7 @@ export default function TrabalheConoscoPage() {
   const onSubmit = async (e) => {
     e.preventDefault();
     if (!file) {
-      setError("Anexe o seu currículo (PDF, DOC ou DOCX).");
+      setError("Anexe o seu currículo (PDF ou DOCX).");
       return;
     }
     setStatus("sending");
@@ -196,7 +196,7 @@ export default function TrabalheConoscoPage() {
                       <Upload size={20} aria-hidden="true" />
                       <span>
                         <strong>Anexar arquivo</strong>
-                        <small>PDF, DOC ou DOCX, até 5 MB</small>
+                        <small>PDF ou DOCX, até 5 MB</small>
                       </span>
                       <input ref={fileInput} type="file" accept={ACCEPTED.join(",")} onChange={onPickFile} />
                     </label>

@@ -13,6 +13,7 @@ const EmpresasPage = lazy(() => import("./pages/EmpresasPage"));
 const ContratosPage = lazy(() => import("./pages/ContratosPage"));
 const GuiaWifiPage = lazy(() => import("./pages/GuiaWifiPage"));
 const LgpdPage = lazy(() => import("./pages/LgpdPage"));
+const ExcluirContaPage = lazy(() => import("./pages/ExcluirContaPage"));
 const TrabalheConoscoPage = lazy(() => import("./pages/TrabalheConoscoPage"));
 const ContratarPage = lazy(() => import("./pages/ContratarPage"));
 const ClienteArea = lazy(() => import("./cliente/ClienteArea"));
@@ -99,6 +100,7 @@ export default function App() {
             <Route path="/boas-praticas-wifi" element={<GuiaWifiPage />} />
             <Route path="/cliente/guia-wifi" element={<GuiaWifiPage />} />
             <Route path="/lgpd" element={<LgpdPage />} />
+            <Route path="/excluir-conta" element={<ExcluirContaPage />} />
             <Route path="/trabalhe-conosco" element={<TrabalheConoscoPage />} />
             <Route path="/contratar" element={<ContratarPage />} />
             <Route path="*" element={<Home />} />

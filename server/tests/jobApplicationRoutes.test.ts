@@ -43,6 +43,33 @@ describe("POST /api/careers/applications", () => {
     await app.close();
   });
 
+  it("aceita DOCX de verdade, recusa DOC antigo e ZIP renomeado para .docx", async () => {
+    const container = testContainer();
+    const app = await buildApp(container);
+    const send = (file: { name: string; bytes: Buffer }) =>
+      app.inject({
+        method: "POST",
+        url: "/api/careers/applications",
+        remoteAddress: `10.9.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`,
+        payload: payload({ file: { name: file.name, data: file.bytes.toString("base64") } })
+      });
+
+    // DOCX = ZIP com partes em word/ (o nome da parte aparece no cabecalho do arquivo local).
+    const docx = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("....word/document.xml....")]);
+    const ok = await send({ name: "curriculo.docx", bytes: docx });
+    expect(ok.statusCode).toBe(201);
+    expect((await container.jobApplications.findById(ok.json().id as number))?.fileMime).toContain("wordprocessingml");
+
+    // DOC antigo (OLE2) nao e mais aceito.
+    const oleDoc = Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0]), Buffer.alloc(64)]);
+    expect((await send({ name: "curriculo.doc", bytes: oleDoc })).statusCode).toBe(400);
+
+    // ZIP qualquer renomeado para .docx: assinatura bate, mas nao tem word/.
+    const zip = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("....fotos/ferias.jpg....")]);
+    expect((await send({ name: "curriculo.docx", bytes: zip })).statusCode).toBe(400);
+    await app.close();
+  });
+
   it("recusa extensao nao permitida", async () => {
     const app = await buildApp(testContainer());
     const response = await app.inject({

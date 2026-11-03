@@ -390,6 +390,14 @@ describe("rotas admin de contratacoes", () => {
       payload: { status: "cancelado" }
     });
     expect(missing.statusCode).toBe(404);
+    const noReason = await app.inject({
+      method: "PATCH",
+      url: `/admin/api/contratacoes/${id}`,
+      headers: { authorization: token },
+      payload: { status: "cancelado" }
+    });
+    expect(noReason.statusCode).toBe(400);
+    expect(noReason.json().error?.code ?? noReason.json().code).toBe("CANCEL_REASON_REQUIRED");
 
     const detail = await app.inject({ method: "GET", url: `/admin/api/contratacoes/${id}`, headers: { authorization: token } });
     expect(detail.statusCode).toBe(200);

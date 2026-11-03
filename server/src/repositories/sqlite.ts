@@ -87,6 +87,101 @@ function migrate(db: DatabaseSync) {
     );
     CREATE INDEX IF NOT EXISTS idx_password_reset_requests_cpf_hash ON password_reset_requests (cpf_hash);
 
+    CREATE TABLE IF NOT EXISTS rate_limit_counters (
+      rl_key TEXT PRIMARY KEY,
+      hits INTEGER NOT NULL DEFAULT 0,
+      window_started_at TEXT NOT NULL,
+      blocked_until TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS push_devices (
+      id TEXT PRIMARY KEY,
+      customer_id TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      platform TEXT NOT NULL,
+      app_version TEXT,
+      contract_ids TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      disabled_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_devices_customer ON push_devices (customer_id);
+
+    CREATE TABLE IF NOT EXISTS push_appointment_state (
+      customer_id TEXT NOT NULL,
+      ticket_protocol TEXT NOT NULL,
+      appointment_key TEXT NOT NULL,
+      notified_at TEXT NOT NULL,
+      PRIMARY KEY (customer_id, ticket_protocol)
+    );
+
+    CREATE TABLE IF NOT EXISTS push_billing_state (
+      customer_id TEXT NOT NULL,
+      invoice_id TEXT NOT NULL,
+      stage INTEGER NOT NULL,
+      notified_at TEXT NOT NULL,
+      PRIMARY KEY (customer_id, invoice_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ticket_ratings (
+      id TEXT PRIMARY KEY,
+      customer_id TEXT NOT NULL,
+      contract_id TEXT NOT NULL,
+      protocol TEXT NOT NULL,
+      ticket_title TEXT NOT NULL,
+      technician TEXT,
+      due_at TEXT NOT NULL,
+      pushed_at TEXT,
+      answered_at TEXT,
+      rating INTEGER,
+      comment TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE (customer_id, protocol)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_ratings_created ON ticket_ratings (created_at);
+
+    CREATE TABLE IF NOT EXISTS location_requests (
+      id TEXT PRIMARY KEY,
+      customer_id TEXT NOT NULL,
+      contract_id TEXT NOT NULL,
+      protocol TEXT NOT NULL,
+      latitude REAL NOT NULL,
+      longitude REAL NOT NULL,
+      accuracy_m REAL,
+      source TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      reviewed_at TEXT,
+      reviewed_by TEXT,
+      review_note TEXT,
+      sgp_posted_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_location_requests_status ON location_requests (status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_location_requests_customer ON location_requests (customer_id, contract_id, protocol);
+
+    CREATE TABLE IF NOT EXISTS app_crashes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      signature TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      stack TEXT NOT NULL,
+      app_version TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      device_model TEXT NOT NULL,
+      android_version TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_app_crashes_signature ON app_crashes (signature);
+    CREATE INDEX IF NOT EXISTS idx_app_crashes_created ON app_crashes (created_at);
+
+    CREATE TABLE IF NOT EXISTS app_crash_status (
+      signature TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      admin_notes TEXT,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS admin_users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,

@@ -1,5 +1,5 @@
 import type { OltCloudClient } from "./oltCloudClient.js";
-import { isEquipmentOffline, normalizeEquipment } from "./oltEquipmentNormalizer.js";
+import { equipmentState, normalizeEquipment } from "./oltEquipmentNormalizer.js";
 
 export type OltConnectionStatus = "ONLINE" | "OFFLINE" | "UNKNOWN";
 
@@ -32,7 +32,11 @@ export async function getClientConnectionStatus(
     return { status: "UNKNOWN", lastStatusUpdate: null, deviceCount: 0 };
   }
 
-  const anyOffline = devices.some(isEquipmentOffline);
+  // Algum equipamento caido => OFFLINE. ONLINE so quando TODOS dizem "online"; qualquer status desconhecido => UNKNOWN
+  // (a tela mostra "Não confirmado", nunca "Online" so porque o contrato esta ativo).
+  const states = devices.map(equipmentState);
+  const anyOffline = states.includes("OFFLINE");
+  const allOnline = states.every((state) => state === "ONLINE");
   const lastStatusUpdate =
     devices
       .map((item) => item.lastStatusUpdate)
@@ -41,7 +45,7 @@ export async function getClientConnectionStatus(
       .pop() ?? null;
 
   return {
-    status: anyOffline ? "OFFLINE" : "ONLINE",
+    status: anyOffline ? "OFFLINE" : allOnline ? "ONLINE" : "UNKNOWN",
     lastStatusUpdate,
     deviceCount: devices.length
   };

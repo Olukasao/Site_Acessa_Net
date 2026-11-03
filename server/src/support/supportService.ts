@@ -2,6 +2,7 @@ import type { Appointment, DiagnosisCategoryId, PublicTicketVisit, TicketTimelin
 import { AppError } from "../errors.js";
 import { CONTACT_PLACEHOLDER, evaluateDiagnosis, getFastDiagnosisQuestion } from "../diagnosis/engine.js";
 import { supportCategories } from "../diagnosis/categories.js";
+import { addObservationLine, addPreferredPeriodLine, preferredPeriodLabel, type PreferredPeriod } from "./preferredPeriod.js";
 import type { AppointmentProvider, BillingProvider, NetworkProvider, TicketProvider } from "../integrations/sgp/providers.js";
 import { mapSgpStatus, normalizeChamadoStatus } from "../integrations/sgp/statusMapper.js";
 import { mapSgpOsToCustomerVisit } from "../integrations/sgp/sgpMapper.js";
@@ -120,7 +121,14 @@ export class SupportService {
     return { diagnosisId: diagnosis?.id, ...result };
   }
 
-  async createTicket(input: { customerId: string; contractId: string; diagnosisId: string; contactPhone: string }) {
+  async createTicket(input: {
+    customerId: string;
+    contractId: string;
+    diagnosisId: string;
+    contactPhone: string;
+    preferredPeriod?: PreferredPeriod;
+    observation?: string;
+  }) {
     const contract = await this.ownership.assertContract(input.customerId, input.contractId);
     const diagnosis = this.ownership.assertDiagnosis(input.customerId, input.diagnosisId);
 
@@ -158,7 +166,11 @@ export class SupportService {
         diagnosis.result.classification === "FALHA_REDE_ACESSO" &&
         Boolean(diagnosis.answers.offline_initial_option);
       const ticketTitle = isAutomaticOfflineTicket ? "CLIENTE OFFLINE" : category?.title ?? "Suporte";
-      const ticketDescription = insertContactPhone(diagnosis.result.structuredDescription, contactPhone);
+      const descriptionWithPhone = insertContactPhone(diagnosis.result.structuredDescription, contactPhone);
+      const ticketDescription = addObservationLine(
+        input.preferredPeriod ? addPreferredPeriodLine(descriptionWithPhone, input.preferredPeriod) : descriptionWithPhone,
+        input.observation
+      );
       const customer = this.store.getCustomer(input.customerId);
 
       let sgpTicket: { sgpTicketId: string; protocol: string; rawStatus: string };
@@ -226,6 +238,7 @@ export class SupportService {
         title: ticketTitle,
         description: ticketDescription,
         timeline,
+        ...(input.preferredPeriod ? { preferredPeriod: preferredPeriodLabel(input.preferredPeriod) } : {}),
         ...(appointment ? { appointment } : {})
       });
 
@@ -272,7 +285,8 @@ export class SupportService {
         title: ticket.title,
         createdAt: ticket.createdAt,
         updatedAt: ticket.updatedAt,
-        appointment: ticket.appointment
+        appointment: ticket.appointment,
+        ...(ticket.preferredPeriod ? { preferredPeriod: ticket.preferredPeriod } : {})
       };
     });
 
@@ -297,7 +311,9 @@ export class SupportService {
       byProtocol.set(ticket.protocol, {
         ...existingLocal,
         ...ticket,
-        appointment: ticket.appointment ?? existingLocal?.appointment,
+        // Quando o SGP conhece o chamado, so o SGP diz quando e a visita. O horario local e inventado na criacao
+        // (createAppointment) e nunca muda, entao nao pode mascarar um reagendamento feito la.
+        appointment: ticket.appointment,
         createdAt: resolvedCreatedAt,
         // "updatedAt" do mapper so tem hora real quando ha agendamento (data_agendamento) ou
         // fechamento (data_finalizacao) -- fora isso ele reusa a mesma data de abertura com hora
@@ -320,11 +336,39 @@ export class SupportService {
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
 
+  /** Visita do chamado como o SGP a conhece agora. `found` = o SGP conhece o protocolo (entao so ele manda no horario). */
+  private async findSgpAppointment(
+    contractId: string,
+    protocol: string
+  ): Promise<{ found: boolean; appointment: Appointment | undefined }> {
+    if (!/^\d+$/.test(contractId)) {
+      return { found: false, appointment: undefined };
+    }
+    try {
+      const occurrences = await this.ticketProvider.listOccurrencesByContract(contractId);
+      for (const occurrence of occurrences) {
+        const mapped = mapSgpOsToCustomerVisit((occurrence as TicketSummaryWithRaw).raw, occurrence.contractId);
+        if (mapped && mapped.protocol === protocol) {
+          return { found: true, appointment: mapped.appointment };
+        }
+      }
+    } catch {
+      // SGP indisponivel: cai no dado local em vez de derrubar a tela.
+    }
+    return { found: false, appointment: undefined };
+  }
+
   async getTicket(customerId: string, ticketId: string) {
     const localTicket = this.store.tickets.get(ticketId);
     if (localTicket && localTicket.customerId === customerId) {
       this.store.recordAudit({ type: "TICKET_VIEWED", customerId, metadata: { ticketId } });
-      return sanitizeTicketRecord(localTicket);
+      const sanitized = sanitizeTicketRecord(localTicket);
+      const sgp = await this.findSgpAppointment(localTicket.contractId, localTicket.protocol);
+      if (sgp.found) {
+        const { appointment: _stale, ...withoutLocalAppointment } = sanitized as Record<string, unknown>;
+        return (sgp.appointment ? { ...withoutLocalAppointment, appointment: sgp.appointment } : withoutLocalAppointment) as typeof sanitized;
+      }
+      return sanitized;
     }
 
     const customer = this.store.getCustomer(customerId);
@@ -360,6 +404,10 @@ export class SupportService {
     const localTicket = this.store.tickets.get(ticketId);
     if (localTicket && localTicket.customerId === customerId) {
       this.store.recordAudit({ type: "APPOINTMENT_VIEWED", customerId, metadata: { ticketId } });
+      const sgp = await this.findSgpAppointment(localTicket.contractId, localTicket.protocol);
+      if (sgp.found) {
+        return sgp.appointment ?? null;
+      }
       return localTicket.appointment ?? (await this.appointmentProvider.getAppointment(ticketId));
     }
 
@@ -408,6 +456,7 @@ export class SupportService {
           openedAt: openedAtFor(activeSgpTicket),
           updatedAt: updatedAtFor(activeSgpTicket),
           appointment: activeSgpTicket.appointment,
+          ...(activeSgpTicket.preferredPeriod ? { preferredPeriod: activeSgpTicket.preferredPeriod } : {}),
           ...(activeSgpTicket.connectionStatus ? { connectionStatus: activeSgpTicket.connectionStatus } : {})
         }
       };
@@ -429,6 +478,7 @@ export class SupportService {
           openedAt: openedAtFor(sgpTicketMatchingLocal),
           updatedAt: updatedAtFor(sgpTicketMatchingLocal),
           appointment: sgpTicketMatchingLocal.appointment,
+          ...(sgpTicketMatchingLocal.preferredPeriod ? { preferredPeriod: sgpTicketMatchingLocal.preferredPeriod } : {}),
           ...(sgpTicketMatchingLocal.closureReason ? { closureReason: sgpTicketMatchingLocal.closureReason } : {})
         }
       };
@@ -460,6 +510,7 @@ export class SupportService {
         openedAt: last.createdAt,
         updatedAt: last.updatedAt,
         appointment: last.appointment,
+        ...("preferredPeriod" in last && last.preferredPeriod ? { preferredPeriod: last.preferredPeriod } : {}),
         ...("connectionStatus" in last && last.connectionStatus ? { connectionStatus: last.connectionStatus } : {}),
         ...("closureReason" in last && last.closureReason ? { closureReason: last.closureReason } : {})
       }

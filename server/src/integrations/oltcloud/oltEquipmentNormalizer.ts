@@ -43,13 +43,22 @@ export function normalizeEquipment(raw: Record<string, unknown>): OltEquipment {
 }
 
 /**
- * Nao assume que todo equipamento retornado pelo filtro da PON esta
- * offline (ver regra 9 do pedido) -- so um "offline" explicito no campo
- * status conta. Valor exato do campo (case) nao confirmado contra uma
- * resposta real; comparacao case-insensitive ate confirmar.
+ * Leitura do campo "status" do equipamento. So "online" explicito conta como online; valores de queda conhecidos
+ * contam como offline; QUALQUER outro valor (vazio, "Ativo", "active", "provisioned"...) e desconhecido -- nunca
+ * online por exclusao, que era o que fazia "contrato ativo" aparecer como "Online" na tela inicial.
  */
+const OFFLINE_STATUSES = new Set(["offline", "los", "dying gasp", "dyinggasp", "dying_gasp", "down", "link loss", "linkloss", "power off", "poweroff"]);
+
+export function equipmentState(equipment: OltEquipment): "ONLINE" | "OFFLINE" | "UNKNOWN" {
+  const value = (equipment.status ?? "").trim().toLowerCase();
+  if (value === "online") return "ONLINE";
+  if (OFFLINE_STATUSES.has(value)) return "OFFLINE";
+  return "UNKNOWN";
+}
+
+/** Nao assume que todo equipamento retornado pelo filtro da PON esta offline (ver regra 9 do pedido). */
 export function isEquipmentOffline(equipment: OltEquipment): boolean {
-  return (equipment.status ?? "").trim().toLowerCase() === "offline";
+  return equipmentState(equipment) === "OFFLINE";
 }
 
 function pickString(record: Record<string, unknown>, fields: string[]): string | null {

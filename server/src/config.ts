@@ -34,12 +34,25 @@ export interface AppConfig {
     basicPassword: string | undefined;
     timeoutMs: number;
     cpfSearchFields: string[];
+    /** TTL do cache por documento (ms) -- positivo e negativo. SGP_DOCUMENT_CACHE_TTL_MS / SGP_DOCUMENT_NEGATIVE_CACHE_TTL_MS. */
+    documentCacheTtlMs?: number;
+    documentNegativeCacheTtlMs?: number;
+    /** Teto global de chamadas ao SGP por minuto (SGP_MAX_CALLS_PER_MINUTE, default 1500). */
+    customerIdSecret?: string | undefined;
+    maxCallsPerMinute?: number;
+    /** Teto de chamadas de BUSCA POR DOCUMENTO por minuto -- a superficie anonima (SGP_MAX_LOOKUP_CALLS_PER_MINUTE, default 300). */
+    maxLookupCallsPerMinute?: number;
+    /** Falhas consecutivas (timeout/rede/5xx) que abrem o circuit breaker e por quanto tempo. */
+    circuitFailureThreshold?: number;
+    circuitOpenMs?: number;
     chamado: {
       app: string | undefined;
       token: string | undefined;
       timeoutMs: number;
       semOs: string | undefined;
       mapping: Record<string, { ocorrenciaTipo: string; motivoOs: string }>;
+      /** Chamado "Anexar documentos" (tipo ANEXAR DOCUMENTO do SGP): tipo/motivo/setor enviados em /api/central/chamado/. */
+      documents: { ocorrenciaTipo: string; motivoOs: string; setor: string | undefined };
     };
     /**
      * Assinaturas eletronicas (SGPSign). "enabled" e uma chave PROPRIA
@@ -92,6 +105,10 @@ export interface AppConfig {
   /** Wi-Fi publico (captive portal + RADIUS) -- ver src/wifi/wifiRoutes.ts. */
   /** Feed de contratacoes pendentes para o chat interno (rota so existe com token). */
   contractFeed: {
+    token: string | undefined;
+  };
+  /** Resumo agregado do site para a aba Marketing do Workspace (a rota so existe com token). */
+  marketingFeed: {
     token: string | undefined;
   };
   wifi: {
@@ -188,6 +205,8 @@ export interface AppConfig {
 }
 
 export type AppConfigOverrides = Partial<Omit<AppConfig, "sgp" | "oltCloud" | "regionalIncident" | "sgpSignMock">> & {
+  /** Equivale a STRICT_ENV=1 (ver loadConfig). */
+  strictEnv?: boolean;
   sgp?: Partial<Omit<AppConfig["sgp"], "chamado" | "sign">> & {
     chamado?: Partial<AppConfig["sgp"]["chamado"]>;
     sign?: Partial<AppConfig["sgp"]["sign"]>;
@@ -209,32 +228,65 @@ export function parseTrustProxy(raw: string | undefined): boolean | number | str
   return parseCsv(value).join(",");
 }
 
-export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
-  const env = (overrides.env ?? (process.env.NODE_ENV as AppConfig["env"]) ?? "development") as AppConfig["env"];
+/** Origens padrao quando nao ha CORS_ORIGINS e o ambiente e de producao/STRICT_ENV (site + WebView do app Capacitor). */
+export const DEFAULT_PRODUCTION_CORS_ORIGINS = ["https://acessanet.com.br", "https://localhost", "capacitor://localhost"];
 
-  const jwtSecret = process.env.JWT_SECRET ?? (env === "production" ? "" : "local-dev-jwt-secret-change-me");
-  const cpfHashSecret = process.env.CPF_HASH_SECRET ?? (env === "production" ? "" : "local-dev-cpf-hash-secret-change-me");
-  const otpHashSecret = process.env.OTP_HASH_SECRET ?? (env === "production" ? "" : "local-dev-otp-hash-secret-change-me");
+let warnedAboutEnvironment = false;
+
+/**
+ * Ambiente efetivo: APP_ENV (do .env do app) tem prioridade sobre NODE_ENV. Em hospedagens onde NODE_ENV vem do painel
+ * e nao pode ser mudado por arquivo, APP_ENV=production no .env do servidor liga o modo producao.
+ */
+function rawEnvironment(): string | undefined {
+  return process.env.APP_ENV ?? process.env.NODE_ENV;
+}
+
+export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
+  const env = (overrides.env ?? (rawEnvironment() as AppConfig["env"]) ?? "development") as AppConfig["env"];
+  /**
+   * STRICT_ENV=1 (opcional, DESLIGADO por padrao): exige NODE_ENV=production definido e trata o ambiente como
+   * producao para segredos fortes, CORS fixo e travas de debug/mock. Nao e o padrao porque o servidor de producao
+   * hoje sobe sem NODE_ENV (reporta "development" em /api/health): torna-lo fatal por padrao derrubaria o site
+   * no proximo deploy. Ligue so depois de definir NODE_ENV=production e os segredos no .env do servidor.
+   */
+  const strictEnv = (overrides.strictEnv ?? process.env.STRICT_ENV === "1") === true;
+  if (strictEnv && !overrides.env && rawEnvironment() !== "production") {
+    throw new Error("STRICT_ENV=1 exige NODE_ENV=production definido explicitamente (hoje: " + (rawEnvironment() ?? "nao definido") + ").");
+  }
+  /** Producao de verdade OU modo estrito: aplica todas as travas de producao. */
+  const prodLike = env === "production" || strictEnv;
+  if (!prodLike && !overrides.env && env === "development" && rawEnvironment() === undefined && !warnedAboutEnvironment) {
+    warnedAboutEnvironment = true;
+    console.warn(
+      "[config] ALERTA DE SEGURANCA: NODE_ENV nao esta definido; rodando como 'development' (segredos padrao do repositorio permitidos, " +
+        "CORS aberto a qualquer origem, rota de debug da OLT ligada). Em producao defina NODE_ENV=production " +
+        "(ou STRICT_ENV=1 para falhar a subida se faltar) e JWT_SECRET/CPF_HASH_SECRET/OTP_HASH_SECRET/ADMIN_JWT_SECRET com 32+ caracteres."
+    );
+  }
+
+  const jwtSecret = process.env.JWT_SECRET ?? (prodLike ? "" : "local-dev-jwt-secret-change-me");
+  const cpfHashSecret = process.env.CPF_HASH_SECRET ?? (prodLike ? "" : "local-dev-cpf-hash-secret-change-me");
+  const otpHashSecret = process.env.OTP_HASH_SECRET ?? (prodLike ? "" : "local-dev-otp-hash-secret-change-me");
   // Sem ADMIN_JWT_SECRET, o admin NUNCA assina com o texto padrao (esta no repositorio, que e publico):
   // deriva do JWT_SECRET real. So cai no padrao de dev quando nem o JWT_SECRET existe (maquina local).
   const adminJwtSecret =
     process.env.ADMIN_JWT_SECRET ??
-    (env === "production"
+    (prodLike
       ? ""
       : process.env.JWT_SECRET
         ? createHmac("sha256", process.env.JWT_SECRET).update("acessanet/admin-jwt/v1").digest("hex")
         : "local-dev-admin-jwt-secret-change-me");
 
-  if (env === "production" && jwtSecret.length < 32 && !overrides.jwtSecret) {
-    throw new Error("JWT_SECRET must contain at least 32 characters in production.");
+  if (prodLike && jwtSecret.length < 32 && !overrides.jwtSecret) {
+    throw new Error("JWT_SECRET must contain at least 32 characters in production (or STRICT_ENV=1).");
   }
-  if (env === "production" && cpfHashSecret.length < 32 && !overrides.cpfHashSecret) {
+  if (prodLike && cpfHashSecret.length < 32 && !overrides.cpfHashSecret) {
     throw new Error("CPF_HASH_SECRET must contain at least 32 characters in production.");
   }
-  if (env === "production" && otpHashSecret.length < 32 && !overrides.otpHashSecret) {
+  if (prodLike && otpHashSecret.length < 32 && !overrides.otpHashSecret) {
     throw new Error("OTP_HASH_SECRET must contain at least 32 characters in production.");
   }
-  if (env === "production" && adminJwtSecret.length < 32 && !overrides.adminJwtSecret) {
+  if (prodLike && adminJwtSecret.length < 32 && !overrides.adminJwtSecret) {
     throw new Error("ADMIN_JWT_SECRET must contain at least 32 characters in production.");
   }
 
@@ -249,7 +301,17 @@ export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
     adminJwtSecret,
     adminAccessTokenTtlSeconds: Number(process.env.ADMIN_ACCESS_TOKEN_TTL_SECONDS ?? 900),
     adminRefreshTokenTtlSeconds: Number(process.env.ADMIN_REFRESH_TOKEN_TTL_SECONDS ?? 60 * 60 * 24 * 7),
-    corsOrigins: corsOriginsEnv ? parseCsv(corsOriginsEnv) : true,
+    /**
+     * Sem CORS_ORIGINS: producao/STRICT_ENV usa a lista fixa (nunca "true"); fora disso reflete qualquer origem
+     * (dev). CORS_ORIGINS="*" nao e aceito em modo producao -- cai na lista fixa.
+     */
+    corsOrigins: corsOriginsEnv
+      ? prodLike && parseCsv(corsOriginsEnv).includes("*")
+        ? DEFAULT_PRODUCTION_CORS_ORIGINS
+        : parseCsv(corsOriginsEnv)
+      : prodLike
+        ? DEFAULT_PRODUCTION_CORS_ORIGINS
+        : true,
     // Sem TRUST_PROXY, confia so no proxy reverso da propria maquina (loopback): atras do proxy da Hostinger todo
     // pedido chega de 127.0.0.1, e sem isso todos os visitantes dividiam o mesmo limite por IP. Conexao vinda
     // de fora do loopback nunca tem o X-Forwarded-For aceito. TRUST_PROXY=false desliga.
@@ -266,12 +328,27 @@ export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
       basicPassword: unwrapEnv(process.env.SGP_BASIC_PASSWORD),
       timeoutMs: Number(process.env.SGP_TIMEOUT_MS ?? 8000),
       cpfSearchFields: parseCsv(process.env.SGP_CPF_SEARCH_FIELDS ?? "cpfcnpj,cpf_cnpj,cpfCnpj,cpf"),
+      // CUSTOMER_ID_HMAC=1: customerId passa a ser HMAC do CPF (ver sgpMapper.ts). Segredo derivado, com separacao de dominio.
+      customerIdSecret: process.env.CUSTOMER_ID_HMAC === "1" ? createHmac("sha256", cpfHashSecret).update("acessanet/customer-id/v1").digest("hex") : undefined,
+      documentCacheTtlMs: Number(process.env.SGP_DOCUMENT_CACHE_TTL_MS ?? 60_000),
+      documentNegativeCacheTtlMs: Number(process.env.SGP_DOCUMENT_NEGATIVE_CACHE_TTL_MS ?? 60_000),
+      maxCallsPerMinute: Number(process.env.SGP_MAX_CALLS_PER_MINUTE ?? 1500),
+      maxLookupCallsPerMinute: Number(process.env.SGP_MAX_LOOKUP_CALLS_PER_MINUTE ?? 300),
+      circuitFailureThreshold: Number(process.env.SGP_CIRCUIT_FAILURE_THRESHOLD ?? 8),
+      circuitOpenMs: Number(process.env.SGP_CIRCUIT_OPEN_MS ?? 20_000),
       chamado: {
         app: unwrapEnv(process.env.SGP_CHAMADO_APP) ?? unwrapEnv(process.env.SGP_APP),
         token: unwrapEnv(process.env.SGP_CHAMADO_TOKEN) ?? unwrapEnv(process.env.SGP_TOKEN),
         timeoutMs: Number(process.env.SGP_CHAMADO_TIMEOUT_MS ?? 15000),
         semOs: unwrapEnv(process.env.SGP_CHAMADO_SEM_OS),
-        mapping: parseChamadoMapping(process.env.SGP_CHAMADO_MAPPING)
+        mapping: parseChamadoMapping(process.env.SGP_CHAMADO_MAPPING),
+        documents: {
+          // 10013 = codigo do tipo ANEXAR DOCUMENTO em /api/central/tipoocorrencia/list/ (id 2335 no relatorio do SGP).
+          ocorrenciaTipo: unwrapEnv(process.env.SGP_DOCUMENTS_TIPO) ?? "10013",
+          motivoOs: unwrapEnv(process.env.SGP_DOCUMENTS_MOTIVO) ?? "2125",
+          // 3 = setor FINANCEIRO, o unico setor desse tipo no SGP.
+          setor: unwrapEnv(process.env.SGP_DOCUMENTS_SETOR) ?? "3"
+        }
       },
       sign: {
         /**
@@ -286,7 +363,7 @@ export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
     },
     sgpSignMock: {
       /** Trava de seguranca: nunca true em producao, independente da env var. */
-      enabled: env !== "production" && process.env.SGP_SIGN_MOCK_ENABLED === "true"
+      enabled: !prodLike && process.env.SGP_SIGN_MOCK_ENABLED === "true"
     },
     oltCloud: {
       enabled: Boolean(
@@ -303,12 +380,15 @@ export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
         enabled:
           process.env.OLTCLOUD_DEBUG_ENABLED !== undefined
             ? process.env.OLTCLOUD_DEBUG_ENABLED === "true"
-            : env !== "production",
+            : !prodLike,
         token: unwrapEnv(process.env.OLTCLOUD_DEBUG_TOKEN)
       }
     },
     contractFeed: {
       token: unwrapEnv(process.env.CONTRACT_FEED_TOKEN)
+    },
+    marketingFeed: {
+      token: unwrapEnv(process.env.MARKETING_FEED_TOKEN)
     },
     wifi: {
       radiusToken: unwrapEnv(process.env.WIFI_RADIUS_TOKEN),
@@ -381,7 +461,7 @@ export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
     },
     sgpSignMock: {
       /** Trava de seguranca reaplicada aqui: nenhum override pode ligar mock em producao. */
-      enabled: env !== "production" && (overrides.sgpSignMock?.enabled ?? base.sgpSignMock.enabled)
+      enabled: !prodLike && (overrides.sgpSignMock?.enabled ?? base.sgpSignMock.enabled)
     }
   };
 }

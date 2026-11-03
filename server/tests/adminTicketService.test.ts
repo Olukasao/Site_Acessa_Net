@@ -211,3 +211,103 @@ describe("AdminTicketService", () => {
     expect(csv).toContain("'=cmd");
   });
 });
+
+describe("AdminTicketService - status 'Indisponivel' por falha do SGP", () => {
+  it("tenta de novo quando a primeira consulta ao SGP falha (lista vazia) e mostra o status real", async () => {
+    const repo = new SqliteCentralActivityRepository(createDatabase(":memory:"));
+    const { ticketProvider, contractProvider } = buildProviders({
+      contract_100: [buildOccurrence({ numero: "1001", status: "Aberta" })]
+    });
+    const real = ticketProvider.listOccurrencesByContract as ReturnType<typeof vi.fn>;
+    const impl = real.getMockImplementation()!;
+    // O provider devolve [] quando o SGP erra: simula uma falha seguida de uma consulta boa.
+    real.mockImplementationOnce(async () => []);
+    real.mockImplementation(impl);
+
+    await seedOpenTicket(repo, {
+      customerId: "customer_a",
+      contractId: "contract_100",
+      protocol: "1001",
+      title: "Sem internet",
+      customerName: "Cliente A",
+      cpfMasked: "***.***.***-01"
+    });
+
+    const service = new AdminTicketService(repo, ticketProvider, contractProvider);
+    const result = await service.listTickets({ range: allTimeRange, page: 1, limit: 20, sort: "createdAt_desc" });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.status).not.toBe("unknown");
+    expect(result.items[0]?.statusLabel).not.toBe("Indisponível");
+    expect(real).toHaveBeenCalledTimes(2);
+  });
+
+  it("nao guarda a lista vazia por 60 s: a pagina seguinte volta a consultar o SGP", async () => {
+    vi.useFakeTimers();
+    try {
+      const repo = new SqliteCentralActivityRepository(createDatabase(":memory:"));
+      const { ticketProvider, contractProvider } = buildProviders({
+        contract_100: [buildOccurrence({ numero: "1001", status: "Aberta" })]
+      });
+      const real = ticketProvider.listOccurrencesByContract as ReturnType<typeof vi.fn>;
+      const impl = real.getMockImplementation()!;
+      real.mockImplementationOnce(async () => []).mockImplementationOnce(async () => []);
+      real.mockImplementation(impl);
+
+      await seedOpenTicket(repo, {
+        customerId: "customer_a",
+        contractId: "contract_100",
+        protocol: "1001",
+        title: "Sem internet",
+        customerName: "Cliente A",
+        cpfMasked: "***.***.***-01"
+      });
+
+      const service = new AdminTicketService(repo, ticketProvider, contractProvider);
+      const first = await service.listTickets({ range: allTimeRange, page: 1, limit: 20, sort: "createdAt_desc" });
+      expect(first.items[0]?.status).toBe("unknown"); // SGP falhou nas duas tentativas
+
+      vi.advanceTimersByTime(6_000); // so o TTL curto do vazio, bem menos que os 60 s do cache normal
+      const second = await service.listTickets({ range: allTimeRange, page: 1, limit: 20, sort: "createdAt_desc" });
+      expect(second.items[0]?.status).not.toBe("unknown");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("limita as consultas simultaneas ao SGP ao montar a pagina", async () => {
+    const repo = new SqliteCentralActivityRepository(createDatabase(":memory:"));
+    const occurrences: Record<string, Record<string, unknown>[]> = {};
+    for (let i = 1; i <= 12; i += 1) occurrences[`contract_${i}`] = [buildOccurrence({ numero: `90${i}`, status: "Aberta" })];
+    const { ticketProvider, contractProvider } = buildProviders(occurrences);
+    const real = ticketProvider.listOccurrencesByContract as ReturnType<typeof vi.fn>;
+    const impl = real.getMockImplementation()!;
+    let running = 0;
+    let peak = 0;
+    real.mockImplementation(async (contractId: string) => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running -= 1;
+      return impl(contractId);
+    });
+
+    for (let i = 1; i <= 12; i += 1) {
+      await seedOpenTicket(repo, {
+        customerId: `customer_${i}`,
+        contractId: `contract_${i}`,
+        protocol: `90${i}`,
+        title: "Chamado",
+        customerName: `Cliente ${i}`,
+        cpfMasked: "***.***.***-00"
+      });
+    }
+
+    const service = new AdminTicketService(repo, ticketProvider, contractProvider);
+    const result = await service.listTickets({ range: allTimeRange, page: 1, limit: 50, sort: "createdAt_desc" });
+
+    expect(result.items).toHaveLength(12);
+    expect(result.items.every((item) => item.status !== "unknown")).toBe(true);
+    expect(peak).toBeLessThanOrEqual(6);
+  });
+});

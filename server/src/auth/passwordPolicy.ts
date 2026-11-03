@@ -1,11 +1,14 @@
 import { AppError } from "../errors.js";
 import { safeEqual } from "../security/hash.js";
+import { isCommonPassword } from "./commonPasswords.js";
 
 export interface PasswordPolicyOptions {
   /** Senha inicial do SGP (ex.: "1234"). Nunca pode ser reescolhida como senha nova. */
   initialPassword: string;
   /** Senha atual do cliente, quando conhecida, para bloquear "nova senha = senha atual". */
   currentPassword?: string;
+  /** CPF/CNPJ (so digitos) do titular: a senha nao pode ser o proprio documento nem conte-lo inteiro. */
+  documentDigits?: string;
 }
 
 /**
@@ -17,6 +20,8 @@ export interface PasswordPolicyOptions {
  *  - pelo menos 1 numero
  *  - nao pode ser igual a senha inicial do SGP (evita repetir "1234")
  *  - nao pode ser igual a senha atual (quando informada)
+ *  - nao pode estar na lista embutida de senhas comuns (auth/commonPasswords.ts)
+ *  - nao pode conter o proprio CPF/CNPJ (quando informado)
  *
  * Estas regras foram escolhidas por serem um piso conservador que qualquer
  * politica de senha do SGP deveria aceitar (letras + numeros, sem exigir
@@ -45,6 +50,14 @@ export function validateNewPassword(newPassword: string, options: PasswordPolicy
 
   if (constantTimeStringEquals(newPassword, options.initialPassword)) {
     throw new AppError(400, "PASSWORD_POLICY_REJECTED", "Escolha uma senha diferente da senha inicial.");
+  }
+
+  if (isCommonPassword(newPassword)) {
+    throw new AppError(400, "PASSWORD_POLICY_REJECTED", "Essa senha é muito comum. Escolha uma senha mais difícil de adivinhar.");
+  }
+
+  if (options.documentDigits && options.documentDigits.length >= 11 && newPassword.replace(/\D/g, "").includes(options.documentDigits)) {
+    throw new AppError(400, "PASSWORD_POLICY_REJECTED", "A senha não pode conter o seu CPF ou CNPJ.");
   }
 
   if (options.currentPassword && constantTimeStringEquals(newPassword, options.currentPassword)) {

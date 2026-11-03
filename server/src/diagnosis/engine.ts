@@ -1091,40 +1091,40 @@ const noInternetWifiQuestions: DiagnosisQuestion[] = [
   },
   {
     id: "connected_to_acessanet_wifi",
-    text: "Voce esta conectado ao Wi-Fi da Acessanet?",
+    text: "Você está conectado ao Wi-Fi da Acessanet?",
     options: [
       { id: "yes", label: "Sim", value: "yes" },
-      { id: "no", label: "Nao", value: "no" },
-      { id: "unknown", label: "Nao sei", value: "unknown" }
+      { id: "no", label: "Não", value: "no" },
+      { id: "unknown", label: "Não sei", value: "unknown" }
     ]
   },
   {
     id: "can_open_any_site",
-    text: "Voce consegue abrir algum site?",
+    text: "Você consegue abrir algum site?",
     options: [
       { id: "yes", label: "Sim", value: "yes" },
-      { id: "no", label: "Nao", value: "no" },
-      { id: "sometimes", label: "As vezes", value: "sometimes" }
+      { id: "no", label: "Não", value: "no" },
+      { id: "sometimes", label: "Às vezes", value: "sometimes" }
     ]
   },
   {
     id: "modem_lights",
-    text: "As luzes do modem estao acesas normalmente?",
+    text: "As luzes do modem estão acesas normalmente?",
     helperText: "Observe luz vermelha, LOS piscando ou equipamento sem energia.",
     options: [
       { id: "normal", label: "Normais", value: "normal" },
       { id: "red", label: "Luz vermelha ou LOS", value: "red" },
       { id: "off", label: "Equipamento apagado", value: "off" },
-      { id: "unknown", label: "Nao sei", value: "unknown" }
+      { id: "unknown", label: "Não sei", value: "unknown" }
     ]
   },
   {
     id: "restarted_equipment",
-    text: "Voce ja reiniciou o equipamento?",
+    text: "Você já reiniciou o equipamento?",
     options: [
       { id: "yes_persists", label: "Sim, problema continua", value: "yes_persists" },
       { id: "yes_solved", label: "Sim, resolveu", value: "yes_solved" },
-      { id: "no", label: "Ainda nao", value: "no" }
+      { id: "no", label: "Ainda não", value: "no" }
     ]
   }
 ];
@@ -1132,7 +1132,7 @@ const noInternetWifiQuestions: DiagnosisQuestion[] = [
 const slowInternetQuestions: DiagnosisQuestion[] = [
   {
     id: "slow_all_devices",
-    text: "A lentidao acontece em todos os aparelhos?",
+    text: "A lentidão acontece em todos os aparelhos?",
     options: [
       { id: "all", label: "Sim", value: "all" },
       { id: "some", label: "Somente alguns", value: "some" }
@@ -1140,27 +1140,27 @@ const slowInternetQuestions: DiagnosisQuestion[] = [
   },
   {
     id: "router_distance",
-    text: "Voce esta perto do roteador?",
+    text: "Você está perto do roteador?",
     options: [
       { id: "near", label: "Sim", value: "near" },
-      { id: "far", label: "Nao", value: "far" }
+      { id: "far", label: "Não", value: "far" }
     ]
   },
   {
     id: "wifi_band",
-    text: "Esta conectado no Wi-Fi 2.4 GHz ou 5 GHz?",
+    text: "Está conectado no Wi-Fi 2.4 GHz ou 5 GHz?",
     options: [
       { id: "2g", label: "2.4 GHz", value: "2g" },
       { id: "5g", label: "5 GHz", value: "5g" },
-      { id: "unknown", label: "Nao sei", value: "unknown" }
+      { id: "unknown", label: "Não sei", value: "unknown" }
     ]
   },
   {
     id: "time_period",
-    text: "A lentidao acontece o tempo todo ou em determinados horarios?",
+    text: "A lentidão acontece o tempo todo ou em determinados horários?",
     options: [
       { id: "always", label: "Sempre", value: "always" },
-      { id: "morning", label: "Manha", value: "morning" },
+      { id: "morning", label: "Manhã", value: "morning" },
       { id: "afternoon", label: "Tarde", value: "afternoon" },
       { id: "night", label: "Noite", value: "night" },
       { id: "varies", label: "Varia", value: "varies" }
@@ -1168,9 +1168,9 @@ const slowInternetQuestions: DiagnosisQuestion[] = [
   },
   {
     id: "affected_services",
-    text: "Em quais servicos percebe lentidao?",
+    text: "Em quais serviços percebe lentidão?",
     options: [
-      { id: "browsing", label: "Navegacao", value: "browsing" },
+      { id: "browsing", label: "Navegação", value: "browsing" },
       { id: "youtube", label: "YouTube", value: "youtube" },
       { id: "streaming", label: "Streaming", value: "streaming" },
       { id: "games", label: "Jogos", value: "games" },
@@ -1183,31 +1183,31 @@ const slowInternetQuestions: DiagnosisQuestion[] = [
 const intermittentQuestions: DiagnosisQuestion[] = [
   {
     id: "drops_frequency",
-    text: "Quantas vezes aproximadamente a conexao cai?",
+    text: "Quantas vezes aproximadamente a conexão cai?",
     options: [
       { id: "daily", label: "1 vez por dia", value: "daily" },
       { id: "few", label: "Algumas vezes", value: "few" },
-      { id: "hourly", label: "Varias vezes por hora", value: "hourly" },
-      { id: "unusable", label: "Conexao praticamente inutilizavel", value: "unusable" }
+      { id: "hourly", label: "Várias vezes por hora", value: "hourly" },
+      { id: "unusable", label: "Conexão praticamente inutilizável", value: "unusable" }
     ]
   },
   {
     id: "approximate_times",
-    text: "Em quais horarios costuma acontecer?",
+    text: "Em quais horários costuma acontecer?",
     options: [
-      { id: "morning", label: "Manha", value: "morning" },
+      { id: "morning", label: "Manhã", value: "morning" },
       { id: "afternoon", label: "Tarde", value: "afternoon" },
       { id: "night", label: "Noite", value: "night" },
-      { id: "random", label: "Sem horario fixo", value: "random" }
+      { id: "random", label: "Sem horário fixo", value: "random" }
     ]
   },
   {
     id: "modem_restarts",
-    text: "O modem reinicia ou apaga quando a conexao cai?",
+    text: "O modem reinicia ou apaga quando a conexão cai?",
     options: [
       { id: "yes", label: "Sim", value: "yes" },
-      { id: "no", label: "Nao", value: "no" },
-      { id: "unknown", label: "Nao sei", value: "unknown" }
+      { id: "no", label: "Não", value: "no" },
+      { id: "unknown", label: "Não sei", value: "unknown" }
     ]
   }
 ];
@@ -1217,7 +1217,7 @@ const wifiProblemQuestions: DiagnosisQuestion[] = [
     id: "wifi_problem_type",
     text: "O que acontece no Wi-Fi?",
     options: [
-      { id: "network_not_showing", label: "Rede nao aparece", value: "network_not_showing" },
+      { id: "network_not_showing", label: "Rede não aparece", value: "network_not_showing" },
       { id: "weak_signal", label: "Sinal fraco ou pouco alcance", value: "weak_signal" },
       { id: "password_error", label: "Senha incorreta", value: "password_error" },
       { id: "connects_no_internet", label: "Conecta, mas fica sem internet", value: "connects_no_internet" },
@@ -1238,26 +1238,26 @@ const wifiProblemQuestions: DiagnosisQuestion[] = [
     text: "O problema acontece perto do roteador?",
     options: [
       { id: "near_too", label: "Sim, mesmo perto", value: "near_too" },
-      { id: "far_only", label: "So longe do roteador", value: "far_only" },
+      { id: "far_only", label: "Só longe do roteador", value: "far_only" },
       { id: "varies", label: "Varia conforme o local", value: "varies" },
-      { id: "unknown", label: "Nao sei", value: "unknown" }
+      { id: "unknown", label: "Não sei", value: "unknown" }
     ]
   },
   {
     id: "wifi_restart",
-    text: "Ja reiniciou o roteador?",
+    text: "Já reiniciou o roteador?",
     options: [
       { id: "yes_persists", label: "Sim, problema continua", value: "yes_persists" },
       { id: "yes_solved", label: "Sim, resolveu", value: "yes_solved" },
-      { id: "no", label: "Ainda nao", value: "no" }
+      { id: "no", label: "Ainda não", value: "no" }
     ]
   }
 ];
 
 const websiteUrlQuestion: DiagnosisQuestion = {
   id: "website_url",
-  text: "Qual e o link do site que nao esta funcionando?",
-  helperText: "Informe o endereco completo, comecando com www., http:// ou https:// (ex: https://www.exemplo.com.br).",
+  text: "Qual é o link do site que não está funcionando?",
+  helperText: "Informe o endereço completo, começando com www., http:// ou https:// (ex: https://www.exemplo.com.br).",
   inputType: "text",
   options: []
 };
@@ -1266,9 +1266,9 @@ const websitesQuestions: DiagnosisQuestion[] = [
   websiteUrlQuestion,
   {
     id: "website_problem_type",
-    text: "O problema acontece em qual tipo de servico?",
+    text: "O problema acontece em qual tipo de serviço?",
     options: [
-      { id: "one_site", label: "Um site especifico", value: "one_site" },
+      { id: "one_site", label: "Um site específico", value: "one_site" },
       { id: "some_apps", label: "Alguns apps ou sites", value: "some_apps" },
       { id: "streaming", label: "Streaming/video", value: "streaming" },
       { id: "games", label: "Jogos", value: "games" },
@@ -1279,11 +1279,11 @@ const websitesQuestions: DiagnosisQuestion[] = [
     id: "website_error_type",
     text: "Qual erro aparece?",
     options: [
-      { id: "not_load", label: "Nao carrega", value: "not_load" },
+      { id: "not_load", label: "Não carrega", value: "not_load" },
       { id: "slow_only", label: "Carrega muito lento", value: "slow_only" },
       { id: "dns_error", label: "Erro de DNS/servidor", value: "dns_error" },
       { id: "login_error", label: "Erro de login no site/app", value: "login_error" },
-      { id: "unknown", label: "Nao sei informar", value: "unknown" }
+      { id: "unknown", label: "Não sei informar", value: "unknown" }
     ]
   },
   {
@@ -1299,10 +1299,10 @@ const websitesQuestions: DiagnosisQuestion[] = [
     id: "website_connection_type",
     text: "Testou pelo Wi-Fi e pelo cabo?",
     options: [
-      { id: "wifi_only", label: "So no Wi-Fi", value: "wifi_only" },
-      { id: "cable_too", label: "Tambem no cabo", value: "cable_too" },
-      { id: "not_tested", label: "Nao testei no cabo", value: "not_tested" },
-      { id: "unknown", label: "Nao sei", value: "unknown" }
+      { id: "wifi_only", label: "Só no Wi-Fi", value: "wifi_only" },
+      { id: "cable_too", label: "Também no cabo", value: "cable_too" },
+      { id: "not_tested", label: "Não testei no cabo", value: "not_tested" },
+      { id: "unknown", label: "Não sei", value: "unknown" }
     ]
   }
 ];
@@ -1324,28 +1324,28 @@ const equipmentQuestions: DiagnosisQuestion[] = [
     text: "Tomada, fonte e cabos foram conferidos?",
     options: [
       { id: "yes", label: "Sim", value: "yes" },
-      { id: "no", label: "Ainda nao", value: "no" },
-      { id: "not_possible", label: "Nao consigo verificar", value: "not_possible" }
+      { id: "no", label: "Ainda não", value: "no" },
+      { id: "not_possible", label: "Não consigo verificar", value: "not_possible" }
     ]
   },
   {
     id: "equipment_lights",
-    text: "Como estao as luzes do equipamento?",
+    text: "Como estão as luzes do equipamento?",
     options: [
       { id: "normal", label: "Normais", value: "normal" },
       { id: "all_off", label: "Todas apagadas", value: "all_off" },
       { id: "red_or_los", label: "Vermelha/LOS", value: "red_or_los" },
       { id: "blinking", label: "Piscando diferente", value: "blinking" },
-      { id: "unknown", label: "Nao sei", value: "unknown" }
+      { id: "unknown", label: "Não sei", value: "unknown" }
     ]
   },
   {
     id: "equipment_restarted",
-    text: "Ja reiniciou o equipamento?",
+    text: "Já reiniciou o equipamento?",
     options: [
       { id: "yes_persists", label: "Sim, problema continua", value: "yes_persists" },
       { id: "yes_solved", label: "Sim, resolveu", value: "yes_solved" },
-      { id: "no", label: "Ainda nao", value: "no" }
+      { id: "no", label: "Ainda não", value: "no" }
     ]
   }
 ];
@@ -1356,38 +1356,38 @@ const phoneQuestions: DiagnosisQuestion[] = [
     text: "Qual problema acontece no telefone?",
     options: [
       { id: "no_line", label: "Sem linha ou mudo", value: "no_line" },
-      { id: "cannot_call", label: "Nao faz chamada", value: "cannot_call" },
-      { id: "cannot_receive", label: "Nao recebe chamada", value: "cannot_receive" },
-      { id: "noise", label: "Chiado ou ruido", value: "noise" },
-      { id: "call_drops", label: "Ligacao cai", value: "call_drops" }
+      { id: "cannot_call", label: "Não faz chamada", value: "cannot_call" },
+      { id: "cannot_receive", label: "Não recebe chamada", value: "cannot_receive" },
+      { id: "noise", label: "Chiado ou ruído", value: "noise" },
+      { id: "call_drops", label: "Ligação cai", value: "call_drops" }
     ]
   },
   {
     id: "phone_device_connected",
-    text: "O telefone esta conectado no equipamento da internet?",
+    text: "O telefone está conectado no equipamento da internet?",
     helperText: "Normalmente o cabo do telefone fica ligado na porta TEL/Phone do equipamento.",
     options: [
       { id: "yes", label: "Sim", value: "yes" },
-      { id: "no", label: "Nao", value: "no" },
-      { id: "unknown", label: "Nao sei", value: "unknown" }
+      { id: "no", label: "Não", value: "no" },
+      { id: "unknown", label: "Não sei", value: "unknown" }
     ]
   },
   {
     id: "phone_internet_working",
-    text: "A internet esta funcionando normalmente?",
+    text: "A internet está funcionando normalmente?",
     options: [
       { id: "yes", label: "Sim", value: "yes" },
-      { id: "no", label: "Nao", value: "no" },
-      { id: "unstable", label: "Esta instavel", value: "unstable" }
+      { id: "no", label: "Não", value: "no" },
+      { id: "unstable", label: "Está instável", value: "unstable" }
     ]
   },
   {
     id: "phone_restart",
-    text: "Ja reiniciou o equipamento e o telefone?",
+    text: "Já reiniciou o equipamento e o telefone?",
     options: [
       { id: "yes_persists", label: "Sim, problema continua", value: "yes_persists" },
       { id: "yes_solved", label: "Sim, resolveu", value: "yes_solved" },
-      { id: "no", label: "Ainda nao", value: "no" }
+      { id: "no", label: "Ainda não", value: "no" }
     ]
   }
 ];
@@ -1404,11 +1404,11 @@ const genericQuestions: DiagnosisQuestion[] = [
   },
   {
     id: "started_when",
-    text: "Quando o problema comecou?",
+    text: "Quando o problema começou?",
     options: [
       { id: "today", label: "Hoje", value: "today" },
-      { id: "days", label: "Ha alguns dias", value: "days" },
-      { id: "weeks", label: "Ha semanas", value: "weeks" }
+      { id: "days", label: "Há alguns dias", value: "days" },
+      { id: "weeks", label: "Há semanas", value: "weeks" }
     ]
   }
 ];
@@ -1416,15 +1416,15 @@ const genericQuestions: DiagnosisQuestion[] = [
 const routerPasswordQuestion: DiagnosisQuestion = {
   id: "router_password_new",
   text: "Qual nova senha deseja usar no Wi-Fi?",
-  helperText: "Use de 8 a 63 caracteres, com pelo menos 1 letra maiuscula, 1 numero e 1 caractere especial. Evite dados obvios, como telefone ou data de nascimento.",
+  helperText: "Use de 8 a 63 caracteres, com pelo menos 1 letra maiúscula, 1 número e 1 caractere especial. Evite dados óbvios, como telefone ou data de nascimento.",
   inputType: "password",
   options: []
 };
 
 const otherProblemQuestion: DiagnosisQuestion = {
   id: "other_problem_description",
-  text: "O que esta acontecendo?",
-  helperText: "Escreva os detalhes principais do problema para a equipe tecnica entender melhor.",
+  text: "O que está acontecendo?",
+  helperText: "Escreva os detalhes principais do problema para a equipe técnica entender melhor.",
   inputType: "text",
   options: []
 };

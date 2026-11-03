@@ -395,3 +395,14 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Nota curta ao fim de uma página institucional */
+.inst-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+  color: var(--ink-3, #56627f);
+  font-size: 0.95rem;
+}
+.inst-note a { color: var(--blue-500, #2a66f6); font-weight: 700; text-decoration: underline; }

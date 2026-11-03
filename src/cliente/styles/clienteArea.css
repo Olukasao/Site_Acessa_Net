@@ -2674,6 +2674,28 @@ body.cliente-area-shell #root {
   overflow-wrap: anywhere;
 }
 
+.cliente-review-answers {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--cliente-navy);
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.cliente-review-answers li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cliente-review-answers li span {
+  font-weight: 600;
+}
+
 .cliente-attendance-sidebar {
   display: grid;
   gap: 14px;
@@ -3355,3 +3377,242 @@ body.cliente-area-shell #root {
   min-height: 44px;
   width: 100%;
 }
+
+/* Avaliação do atendimento (cartão depois que o chamado é encerrado) */
+.cliente-rating {
+  padding: 18px;
+  border: 1px solid #e3e9f3;
+  border-left: 4px solid var(--cliente-blue);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 4px 16px rgba(11, 22, 48, 0.04);
+}
+
+.cliente-rating form {
+  display: grid;
+  gap: 12px;
+}
+
+.cliente-rating-head h3 {
+  margin: 0;
+  color: var(--cliente-navy);
+  font-size: 1.05rem;
+}
+
+.cliente-rating-head p,
+.cliente-rating-thanks p {
+  margin: 4px 0 0;
+  color: var(--cliente-muted);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.cliente-rating-stars {
+  display: flex;
+  gap: 4px;
+}
+
+.cliente-rating-star {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #c3ccdc;
+  cursor: pointer;
+}
+
+.cliente-rating-star.is-on {
+  color: var(--cliente-amber);
+}
+
+.cliente-rating-star.is-on svg {
+  fill: currentColor;
+}
+
+.cliente-rating-star:focus-visible {
+  outline: 2px solid var(--cliente-blue);
+  outline-offset: 2px;
+}
+
+.cliente-rating-label {
+  min-height: 1.3em;
+  margin: -4px 0 0;
+  color: var(--cliente-muted);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.cliente-rating-comment {
+  display: grid;
+  gap: 6px;
+  color: var(--cliente-navy);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.cliente-rating-comment textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--cliente-border-strong);
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 400;
+  resize: vertical;
+}
+
+.cliente-rating-error {
+  margin: 0;
+  color: var(--cliente-red);
+  font-size: 0.88rem;
+}
+
+.cliente-rating-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.cliente-rating-skip,
+.cliente-rating-send {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cliente-rating-skip {
+  border: 1px solid var(--cliente-border);
+  background: #ffffff;
+  color: var(--cliente-muted);
+}
+
+.cliente-rating-send {
+  border: 0;
+  background: var(--cliente-blue);
+  color: #ffffff;
+}
+
+.cliente-rating-send:disabled,
+.cliente-rating-skip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cliente-rating-thanks {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-left-color: var(--cliente-green);
+  color: var(--cliente-green);
+}
+
+.cliente-rating-thanks strong {
+  color: var(--cliente-navy);
+}
+
+@media (max-width: 520px) {
+  .cliente-rating-stars {
+    justify-content: space-between;
+  }
+
+  .cliente-rating-actions > button {
+    flex: 1;
+  }
+}
+
+/* Observação opcional ao abrir o chamado */
+.cliente-observation-field textarea {
+  width: 100%;
+  min-height: 84px;
+  padding: 10px 12px;
+  border: 1px solid var(--cliente-border-strong);
+  border-radius: 10px;
+  font: inherit;
+  resize: vertical;
+}
+
+.cliente-optional {
+  color: var(--cliente-muted);
+  font-weight: 600;
+}
+
+.cliente-observation-count {
+  justify-self: end;
+  color: var(--cliente-muted);
+  font-size: 0.78rem;
+}
+
+/* Envio da localizacao da casa para a visita (VisitLocationCard). */
+.cliente-location-card { display: grid; gap: 10px; padding: 14px; border: 1px solid #d9e6f2; border-radius: 14px; background: #f6faff; }
+.cliente-location-head { display: flex; gap: 10px; align-items: center; }
+.cliente-location-head small { display: block; color: #52606d; }
+.cliente-location-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: #e0f1ff; color: #0b5cab; flex: none; }
+.cliente-location-body { display: grid; gap: 10px; }
+.cliente-location-body p, .cliente-location-status { margin: 0; font-size: 0.92rem; line-height: 1.45; }
+.cliente-location-status { display: flex; gap: 6px; align-items: center; color: #3e4c59; }
+.cliente-location-status.is-ok { color: #1c6b3a; }
+.cliente-location-status.is-warn { color: #8a5a00; }
+.cliente-location-error { margin: 0; color: #b42318; font-size: 0.9rem; }
+.cliente-location-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Aviso no topo (Toast.jsx): chamado aberto, documentos enviados, erros de envio. */
+.cliente-toast-stack {
+  position: fixed;
+  z-index: 11500;
+  top: calc(max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px)) + 12px);
+  left: 12px;
+  right: 12px;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  pointer-events: none;
+}
+.cliente-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: min(100%, 460px);
+  padding: 12px 12px 12px 14px;
+  border-radius: 14px;
+  background: #fff;
+  color: #102a43;
+  border: 1px solid #cfe3d6;
+  border-left: 5px solid #1c9c55;
+  box-shadow: 0 12px 32px rgba(15, 35, 70, 0.22);
+  animation: cliente-toast-in 0.28s ease-out;
+}
+.cliente-toast.is-success svg { color: #1c9c55; flex: none; }
+.cliente-toast.is-danger { border-color: #f1c4c0; border-left-color: #d92d20; }
+.cliente-toast.is-danger svg { color: #d92d20; flex: none; }
+.cliente-toast strong { display: block; font-size: 0.95rem; }
+.cliente-toast p { margin: 2px 0 0; font-size: 0.88rem; line-height: 1.4; color: #3e4c59; }
+.cliente-toast-close { margin-left: auto; border: 0; background: transparent; color: #52606d; padding: 2px; cursor: pointer; }
+@keyframes cliente-toast-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .cliente-toast { animation: none; } }
+
+/* Campos obrigatorios nao preenchidos: texto e borda em vermelho. */
+.cliente-errors-summary {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #f1c4c0;
+  border-left: 5px solid #d92d20;
+  background: #fff4f2;
+  color: #912018;
+  font-size: 0.9rem;
+}
+.cliente-errors-summary strong { font-size: 0.95rem; }
+.cliente-errors-summary ul { margin: 0; padding-left: 18px; }
+.cliente-field-error { margin: 4px 0 0; color: #d92d20; font-size: 0.85rem; font-weight: 700; }
+.cliente-attendance-text-form input.has-error,
+.cliente-attendance-text-form textarea.has-error,
+.cliente-attendance-text-form input[aria-invalid="true"] { border-color: #d92d20; box-shadow: 0 0 0 3px rgba(217, 45, 32, 0.12); }
+.cliente-period-field.has-error { border: 1px solid #d92d20; border-radius: 12px; padding: 10px; background: #fff8f7; }

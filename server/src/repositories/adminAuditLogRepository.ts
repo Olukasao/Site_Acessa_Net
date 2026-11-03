@@ -25,6 +25,7 @@ export type AdminAuditAction =
   | "VIEW_CONTRACT_MARKETING_LEADS"
   | "REMOVE_MARKETING_LEAD"
   | "VIEW_JOB_APPLICATIONS"
+  | "VIEW_JOB_APPLICATION"
   | "DOWNLOAD_JOB_APPLICATION"
   | "UPDATE_JOB_APPLICATION"
   | "VIEW_PLAN_LEADS"
@@ -35,7 +36,15 @@ export type AdminAuditAction =
   | "CREATE_ADMIN_USER"
   | "UPDATE_ADMIN_USER"
   | "DELETE_ADMIN_USER"
-  | "VIEW_SELLER_RANKING";
+  | "VIEW_SELLER_RANKING"
+  | "VIEW_RATINGS"
+  | "DELETE_RATING"
+  | "VIEW_LOCATIONS"
+  | "APPROVE_LOCATION"
+  | "REJECT_LOCATION"
+  | "DELETE_CONTRACT_RATINGS"
+  | "VIEW_APP_CRASHES"
+  | "UPDATE_APP_CRASH";
 
 export interface AdminAuditLogInput {
   adminUserId?: string | null | undefined;

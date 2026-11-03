@@ -123,6 +123,10 @@ export class CentralActivityService {
     return this.repository.listEventTypes();
   }
 
+  findCustomerNames(customerIds: string[]) {
+    return this.repository.findCustomerNames(customerIds);
+  }
+
   private async baseInput(
     auth: { customerId: string; sessionId: string; cpfHash: string },
     request: FastifyRequest,

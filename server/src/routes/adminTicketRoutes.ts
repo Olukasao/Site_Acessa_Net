@@ -6,7 +6,7 @@ import { parseParams, parseQuery } from "./validation.js";
 import { sha256 } from "../security/hash.js";
 import type { AnalyticsRange } from "../repositories/centralActivityRepository.js";
 
-const periodQuery = z.object({
+export const periodQuery = z.object({
   period: z.enum(["today", "yesterday", "7d", "30d", "this_month", "custom"]).default("30d"),
   from: z.string().optional(),
   to: z.string().optional()
@@ -28,7 +28,7 @@ const protocolParams = z.object({
   protocol: z.string().trim().min(1).max(60)
 });
 
-function rangeFrom(query: z.infer<typeof periodQuery>): AnalyticsRange {
+export function rangeFrom(query: z.infer<typeof periodQuery>): AnalyticsRange {
   const now = new Date();
   const to = query.period === "custom" && query.to ? parseDate(query.to, now) : now;
   const from = new Date(to);

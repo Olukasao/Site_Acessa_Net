@@ -408,6 +408,15 @@ export async function registerContractRequestRoutes(app: FastifyInstance, contai
       throw new AppError(404, "NOT_FOUND", "Solicitação não encontrada.");
     }
 
+    // Cancelar exige o motivo (fica no historico do pedido como nota).
+    let note = body.note;
+    if (body.status === "cancelado" && before.status !== "cancelado") {
+      if (!note || note.length < 5) {
+        throw new AppError(400, "CANCEL_REASON_REQUIRED", "Informe o motivo do cancelamento (mínimo de 5 caracteres).");
+      }
+      note = `Motivo do cancelamento: ${note}`.slice(0, 2000);
+    }
+
     let assignedAdminId = body.assignedAdminId;
     // Qualquer pessoa com contratacoes.update troca o responsavel (a troca fica no historico
     // do pedido e na auditoria). Vendedor que atende pedido sem responsavel passa a ser o responsavel.
@@ -417,7 +426,7 @@ export async function registerContractRequestRoutes(app: FastifyInstance, contai
 
     const updated = await container.contractRequests.applyChanges(
       id,
-      { status: body.status, assignedAdminId, note: body.note },
+      { status: body.status, assignedAdminId, note },
       admin.adminUserId
     );
     if (!updated) {

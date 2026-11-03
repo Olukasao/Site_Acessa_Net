@@ -5,7 +5,7 @@ import "./globe.css";
 // O fallback (Terra em CSS puro) é renderizado SEMPRE primeiro: zero JS de
 // terceiros, zero atraso de leitura. O WebGL só sobe depois do primeiro
 // paint, em idle, com as texturas já carregadas, e faz crossfade por cima.
-export default function Globe() {
+export default function Globe({ lockDay = false }) {
   const tier = useDeviceTier();
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -23,7 +23,7 @@ export default function Globe() {
       try {
         const { GlobeScene } = await import("../three/GlobeScene.js");
         if (cancelled || !canvasRef.current) return;
-        scene = await GlobeScene.create(canvasRef.current, { tier, onReady: () => setReady(true) });
+        scene = await GlobeScene.create(canvasRef.current, { tier, lockDay, onReady: () => setReady(true) });
         if (cancelled) {
           scene.dispose();
           return;
@@ -52,7 +52,7 @@ export default function Globe() {
       document.removeEventListener("visibilitychange", onVis);
       scene?.dispose();
     };
-  }, [tier]);
+  }, [tier, lockDay]);
 
   return (
     <div ref={wrapRef} className={`globe ${ready ? "is-ready" : ""}`} aria-hidden="true">

@@ -39,6 +39,8 @@ export interface TicketRecord extends TicketSummary {
   sgpTicketId: string;
   description: string;
   timeline: TicketTimelineEvent[];
+  /** Horario preferencial escolhido pelo cliente (texto para exibir). */
+  preferredPeriod?: string;
 }
 
 export interface AuditEventRecord {

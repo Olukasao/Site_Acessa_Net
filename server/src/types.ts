@@ -167,6 +167,8 @@ export interface PublicTicketVisit {
   connectionStatus?: "ONLINE" | "OFFLINE";
   /** So preenchido quando o chamado esta fechado: motivo/nota de encerramento registrado no SGP. */
   closureReason?: string;
+  /** Horario preferencial de atendimento escolhido ao abrir o chamado ("Manhã", "Tarde", "Noite" ou "Integral"). */
+  preferredPeriod?: string;
 }
 
 export interface SupportCategory {

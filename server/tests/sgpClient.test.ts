@@ -12,7 +12,7 @@ function buildConfig(): AppConfig["sgp"] {
     basicPassword: undefined,
     timeoutMs: 8000,
     cpfSearchFields: ["cpfcnpj"],
-    chamado: { app: undefined, token: undefined, timeoutMs: 15000, semOs: undefined, mapping: {} },
+    chamado: { app: undefined, token: undefined, timeoutMs: 15000, semOs: undefined, mapping: {}, documents: { ocorrenciaTipo: "10013", motivoOs: "2125", setor: "3" } },
     sign: { enabled: false, app: undefined, token: undefined, timeoutMs: 10000 }
   };
 }
@@ -99,5 +99,52 @@ describe("SgpUraClient.listInvoicesByContract", () => {
     await client.listInvoicesByContract("5989");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SgpUraClient.listOccurrencesByContract - contrato com muitos chamados", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("espera uma resposta de 12 s (acima dos 8 s globais) em vez de estourar o tempo e virar lista vazia", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: { signal: AbortSignal }) =>
+          new Promise((resolve, reject) => {
+            init.signal.addEventListener("abort", () => reject(new Error("aborted")));
+            setTimeout(() => resolve({ ok: true, status: 200, json: async () => ({ ocorrencias: [{ numero: "1" }] }) }), 12_000);
+          })
+      )
+    );
+    const client = new SgpUraClient(buildConfig());
+
+    const pending = client.listOccurrencesByContract("16207");
+    await vi.advanceTimersByTimeAsync(12_500);
+
+    await expect(pending).resolves.toEqual([{ numero: "1" }]);
+  });
+
+  it("ainda desiste de uma consulta travada (mais de 20 s)", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init.signal.addEventListener("abort", () => reject(new Error("aborted")));
+          })
+      )
+    );
+    const client = new SgpUraClient(buildConfig());
+
+    const pending = client.listOccurrencesByContract("16207");
+    const assertion = expect(pending).rejects.toMatchObject({ code: "SGP_REQUEST_FAILED" });
+    await vi.advanceTimersByTimeAsync(20_500);
+
+    await assertion;
   });
 });

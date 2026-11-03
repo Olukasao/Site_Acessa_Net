@@ -48,6 +48,10 @@ export class InMemoryRateLimiter {
     }
   }
 
+  forget(key: string) {
+    this.buckets.delete(key);
+  }
+
   reset() {
     this.buckets.clear();
   }

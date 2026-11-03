@@ -10,7 +10,7 @@ import type { AuditLogRepository } from "../src/repositories/auditLogRepository.
 import type { LoginAttemptRepository, LoginAttemptRule } from "../src/repositories/loginAttemptRepository.js";
 import type { Mailer } from "../src/email/mailer.js";
 import type { CpfResolverResult } from "../src/auth/cpfResolver.js";
-import { hmacSha256 } from "../src/security/hash.js";
+import { hashPassword, hmacSha256 } from "../src/security/hash.js";
 import { AppError } from "../src/errors.js";
 
 const VALID_CPF = "52998224725"; // digito verificador valido
@@ -129,9 +129,9 @@ function fakePasswordResets(): PasswordResetRepository {
       matches.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       return matches[0] ?? null;
     },
-    async incrementOtpAttempts(id) {
+    async incrementOtpAttempts(id, max) {
       const row = rows.get(id);
-      if (!row) return 0;
+      if (!row || row.otpAttempts >= max) return null;
       row.otpAttempts += 1;
       return row.otpAttempts;
     },
@@ -152,6 +152,12 @@ function fakePasswordResets(): PasswordResetRepository {
     async markResetTokenUsed(id, when) {
       const row = rows.get(id);
       if (row) row.resetTokenUsedAt = when;
+    },
+    async claimResetToken(id, when) {
+      const row = rows.get(id);
+      if (!row || row.resetTokenUsedAt) return false;
+      row.resetTokenUsedAt = when;
+      return true;
     }
   };
 }
@@ -315,14 +321,14 @@ describe("PasswordResetService", () => {
     const sentCode = getSentCode(mailer);
     const { resetToken } = await service.verifyCode({ cpf: VALID_CPF, code: sentCode, ip: "1.1.1.1" });
 
-    await service.resetPassword({ resetToken, newPassword: "novaSenha123", confirmPassword: "novaSenha123", ip: "1.1.1.1" });
+    await service.resetPassword({ resetToken, newPassword: "Tulipa-Roxa-47", confirmPassword: "Tulipa-Roxa-47", ip: "1.1.1.1" });
 
     const cpfHash = hmacSha256(VALID_CPF, CONFIG.cpfHashSecret);
     const profile = await authProfiles.findByCpfHash(cpfHash);
     expect(profile?.passwordHash).toBeTruthy();
 
     await expect(
-      service.resetPassword({ resetToken, newPassword: "outraSenha123", confirmPassword: "outraSenha123", ip: "1.1.1.1" })
+      service.resetPassword({ resetToken, newPassword: "Girassol-Azul-58", confirmPassword: "Girassol-Azul-58", ip: "1.1.1.1" })
     ).rejects.toMatchObject({ code: "RESET_TOKEN_INVALID" });
   });
 
@@ -337,7 +343,7 @@ describe("PasswordResetService", () => {
     request!.resetTokenExpiresAt = new Date(Date.now() - 1000);
 
     await expect(
-      service.resetPassword({ resetToken, newPassword: "novaSenha123", confirmPassword: "novaSenha123", ip: "1.1.1.1" })
+      service.resetPassword({ resetToken, newPassword: "Tulipa-Roxa-47", confirmPassword: "Tulipa-Roxa-47", ip: "1.1.1.1" })
     ).rejects.toMatchObject({ code: "RESET_TOKEN_EXPIRED" });
   });
 
@@ -348,6 +354,12 @@ describe("PasswordResetService", () => {
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 });
+
+/** O primeiro acesso agora exige OTP (ver firstAccess.test.ts); aqui a senha inicial e gravada direto. */
+async function seedPassword(authProfiles: AuthProfileRepository, cpfHash: string, password: string) {
+  await authProfiles.getOrCreate({ cpfHash, cpfLastDigits: "4725", sgpCustomerId: "customer_1" });
+  await authProfiles.setPasswordHash(cpfHash, await hashPassword(password), new Date());
+}
 
 describe("LocalPasswordAuthService.changePassword", () => {
   it("troca a senha com sucesso quando a senha atual esta correta", async () => {
@@ -367,7 +379,8 @@ describe("LocalPasswordAuthService.changePassword", () => {
     );
 
     const cpfHash = hmacSha256(VALID_CPF, CONFIG.cpfHashSecret);
-    const setup = await service.setupPassword({ cpf: VALID_CPF, newPassword: "senhaAntiga1", ip: "1.1.1.1" });
+    await seedPassword(authProfiles, cpfHash, "senhaAntiga1");
+    const setup = { customer: { id: "customer_1" } };
 
     await service.changePassword({
       customerId: setup.customer.id,
@@ -401,7 +414,8 @@ describe("LocalPasswordAuthService.changePassword", () => {
     );
 
     const cpfHash = hmacSha256(VALID_CPF, CONFIG.cpfHashSecret);
-    const setup = await service.setupPassword({ cpf: VALID_CPF, newPassword: "senhaAntiga1", ip: "1.1.1.1" });
+    await seedPassword(authProfiles, cpfHash, "senhaAntiga1");
+    const setup = { customer: { id: "customer_1" } };
 
     await expect(
       service.changePassword({

@@ -14,7 +14,7 @@ import { AppError } from "../../errors.js";
 import type { InMemoryStore } from "../../repositories/inMemoryStore.js";
 import { randomId } from "../../security/hash.js";
 import type { SgpContractRaw, SgpInvoiceRaw, SgpOccurrenceRaw, SgpUraClient } from "./sgpClient.js";
-import { mapSgpStatus } from "./statusMapper.js";
+import { mapSgpStatus, normalizeChamadoStatus } from "./statusMapper.js";
 import { mapSgpOccurrence, extractConnectionStatus } from "./sgpMapper.js";
 import { mapSgpSignatureStatus, getSignatureStatusLabel, type SignatureStatus } from "./signatureStatusMapper.js";
 import type { OltCloudClient } from "../oltcloud/oltCloudClient.js";
@@ -494,6 +494,7 @@ export class SgpBackedTicketProvider implements TicketProvider {
     } catch {
       return [];
     }
+    rawOccurrences = await Promise.all(rawOccurrences.map((raw) => this.withServiceOrderTimes(raw)));
 
     return rawOccurrences
       .map((raw) => {
@@ -505,7 +506,36 @@ export class SgpBackedTicketProvider implements TicketProvider {
       })
       .filter((ticket): ticket is TicketSummaryWithRaw => ticket !== null);
   }
+
+  /**
+   * A lista de ocorrencias traz a OS so com a DATA do agendamento ("data_agendamento": "AAAA-MM-DD"); a hora fica
+   * em /api/os/list/id/{id}. Para OS aberta sem hora, busca a hora e devolve uma copia com "os_data_agendamento"
+   * (o campo que o mapper le primeiro). Nunca altera o objeto que esta no cache do cliente.
+   */
+  private async withServiceOrderTimes(raw: SgpOccurrenceRaw): Promise<SgpOccurrenceRaw> {
+    const client = this.client as SgpUraClient & { getServiceOrderSchedule?: (osId: string) => Promise<string | null> };
+    const orders = (raw as Record<string, unknown>).ordens_servicos;
+    if (typeof client.getServiceOrderSchedule !== "function" || !Array.isArray(orders) || orders.length === 0) return raw;
+
+    let lookups = 0;
+    const enriched = await Promise.all(
+      (orders as Array<Record<string, unknown>>).map(async (os) => {
+        const dateOnly = typeof os.data_agendamento === "string" && /^\d{4}-\d{2}-\d{2}$/.test(os.data_agendamento.trim());
+        const hasFull = typeof os.os_data_agendamento === "string" && os.os_data_agendamento.trim() !== "";
+        const closed = normalizeChamadoStatus(mapSgpStatus(String(os.status ?? ""))).status === "closed";
+        const osId = String(os.id ?? os.os_id ?? "");
+        if (!dateOnly || hasFull || closed || !osId || lookups >= MAX_OS_TIME_LOOKUPS) return os;
+        lookups += 1;
+        const schedule = await client.getServiceOrderSchedule!(osId).catch(() => null);
+        return schedule ? { ...os, os_data_agendamento: schedule } : os;
+      })
+    );
+    return { ...raw, ordens_servicos: enriched } as SgpOccurrenceRaw;
+  }
 }
+
+/** No maximo quantas OS por ocorrencia buscam a hora real (protege o teto de chamadas ao SGP). */
+const MAX_OS_TIME_LOOKUPS = 3;
 
 export class SgpBackedContractProvider implements ContractProvider {
   constructor(

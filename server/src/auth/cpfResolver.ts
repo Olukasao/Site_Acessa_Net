@@ -13,7 +13,9 @@ export interface CpfResolverResult {
 export class CpfResolver {
   constructor(
     private readonly store: InMemoryStore,
-    private readonly client: SgpUraClient
+    private readonly client: SgpUraClient,
+    /** Segredo p/ derivar o customerId por HMAC (so quando CUSTOMER_ID_HMAC=1; vazio = id legado). */
+    private readonly customerIdSecret?: string
   ) {}
 
   async resolve(documento: string): Promise<CpfResolverResult | null> {
@@ -27,7 +29,7 @@ export class CpfResolver {
       return null;
     }
 
-    const mapped = mapSgpCustomer(digits, contracts);
+    const mapped = mapSgpCustomer(digits, contracts, { hmacSecret: this.customerIdSecret });
     if (!mapped) {
       return null;
     }

@@ -30,11 +30,17 @@ export interface PasswordResetRepository {
   findLatestByCpfHash(cpfHash: string): Promise<PasswordResetRequestRecord | null>;
   /** Solicitacao ativa (otp_used_at NULL) mais recente do cpf_hash -- usada para validar o codigo informado. */
   findActiveByCpfHash(cpfHash: string): Promise<PasswordResetRequestRecord | null>;
-  incrementOtpAttempts(id: string): Promise<number>;
+  /**
+   * Incremento ATOMICO e limitado (UPDATE ... WHERE otp_attempts < max): tentativas paralelas nao
+   * passam do teto. Devolve o novo total, ou null se o teto ja tinha sido atingido (nada foi incrementado).
+   */
+  incrementOtpAttempts(id: string, max: number): Promise<number | null>;
   markOtpUsed(id: string, when: Date): Promise<void>;
   setResetToken(id: string, resetTokenHash: string, resetTokenExpiresAt: Date): Promise<void>;
   findByResetTokenHash(resetTokenHash: string): Promise<PasswordResetRequestRecord | null>;
   markResetTokenUsed(id: string, when: Date): Promise<void>;
+  /** Consome o reset_token de forma atomica (UPDATE ... WHERE reset_token_used_at IS NULL). false = outro pedido ja consumiu. */
+  claimResetToken(id: string, when: Date): Promise<boolean>;
 }
 
 interface PasswordResetRequestRow {
@@ -104,12 +110,15 @@ export class SqlitePasswordResetRepository implements PasswordResetRepository {
     return row ? fromRow(row) : null;
   }
 
-  async incrementOtpAttempts(id: string): Promise<number> {
-    this.db.prepare("UPDATE password_reset_requests SET otp_attempts = otp_attempts + 1 WHERE id = ?").run(id);
+  async incrementOtpAttempts(id: string, max: number): Promise<number | null> {
+    const result = this.db
+      .prepare("UPDATE password_reset_requests SET otp_attempts = otp_attempts + 1 WHERE id = ? AND otp_attempts < ?")
+      .run(id, max);
+    if (Number(result.changes) !== 1) return null;
     const row = this.db
       .prepare("SELECT otp_attempts FROM password_reset_requests WHERE id = ?")
       .get(id) as { otp_attempts: number } | undefined;
-    return row?.otp_attempts ?? 0;
+    return row?.otp_attempts ?? null;
   }
 
   async markOtpUsed(id: string, when: Date): Promise<void> {
@@ -133,6 +142,13 @@ export class SqlitePasswordResetRepository implements PasswordResetRepository {
     this.db
       .prepare("UPDATE password_reset_requests SET reset_token_used_at = ? WHERE id = ?")
       .run(when.toISOString(), id);
+  }
+
+  async claimResetToken(id: string, when: Date): Promise<boolean> {
+    const result = this.db
+      .prepare("UPDATE password_reset_requests SET reset_token_used_at = ? WHERE id = ? AND reset_token_used_at IS NULL")
+      .run(when.toISOString(), id);
+    return Number(result.changes) === 1;
   }
 
   private async findById(id: string): Promise<PasswordResetRequestRecord | null> {
@@ -182,11 +198,15 @@ export class MysqlPasswordResetRepository implements PasswordResetRepository {
     return row ? fromRow(row) : null;
   }
 
-  async incrementOtpAttempts(id: string): Promise<number> {
-    await this.pool.execute("UPDATE password_reset_requests SET otp_attempts = otp_attempts + 1 WHERE id = ?", [id]);
+  async incrementOtpAttempts(id: string, max: number): Promise<number | null> {
+    const [result] = await this.pool.execute(
+      "UPDATE password_reset_requests SET otp_attempts = otp_attempts + 1 WHERE id = ? AND otp_attempts < ?",
+      [id, max]
+    );
+    if (Number((result as { affectedRows?: number }).affectedRows) !== 1) return null;
     const [rows] = await this.pool.execute("SELECT otp_attempts FROM password_reset_requests WHERE id = ?", [id]);
     const row = (rows as { otp_attempts: number }[])[0];
-    return row?.otp_attempts ?? 0;
+    return row?.otp_attempts ?? null;
   }
 
   async markOtpUsed(id: string, when: Date): Promise<void> {
@@ -216,6 +236,14 @@ export class MysqlPasswordResetRepository implements PasswordResetRepository {
       when.toISOString(),
       id
     ]);
+  }
+
+  async claimResetToken(id: string, when: Date): Promise<boolean> {
+    const [result] = await this.pool.execute(
+      "UPDATE password_reset_requests SET reset_token_used_at = ? WHERE id = ? AND reset_token_used_at IS NULL",
+      [when.toISOString(), id]
+    );
+    return Number((result as { affectedRows?: number }).affectedRows) === 1;
   }
 
   private async findById(id: string): Promise<PasswordResetRequestRecord | null> {

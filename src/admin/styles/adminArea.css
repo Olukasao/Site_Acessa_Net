@@ -1031,3 +1031,76 @@
     padding: 18px 14px 48px;
   }
 }
+
+/* Avaliações do atendimento */
+.admin-rating-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .admin-rating-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-rating-stars {
+  display: inline-flex;
+  gap: 1px;
+  color: #c3ccdc;
+}
+
+.admin-rating-stars .is-on {
+  color: #f4b740;
+  fill: currentColor;
+}
+
+.admin-rating-comment {
+  max-width: 360px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.admin-table tbody tr.is-selected {
+  background: rgba(47, 107, 255, 0.08);
+}
+
+/* Erros do app */
+.admin-crash-title {
+  max-width: 420px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  font-weight: 700;
+}
+
+.admin-crash-stack {
+  max-height: 280px;
+  margin: 0 0 12px;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: #0b1630;
+  color: #dbe4ff;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Currículo exibido na página (JobApplicationViewer): sem seleção de texto, sem arrastar o conteúdo. */
+.admin-cv-viewer {
+  margin: 12px 0;
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--admin-border, #d9e2ec);
+  border-radius: 10px;
+  background: #eef2f6;
+  padding: 8px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.admin-cv-viewer canvas { background: #fff; pointer-events: none; }
+.admin-cv-viewer-note { margin: 8px 0; color: #52606d; font-size: 0.9rem; }
+
+.admin-rating-actions { display: flex; flex-wrap: wrap; gap: 6px; }

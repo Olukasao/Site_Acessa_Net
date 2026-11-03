@@ -55,6 +55,7 @@ const SECONDARY = [
 // iluminado e o terminador cai na borda direita, mostrando as luzes das
 // cidades conforme a Terra gira.
 const SUN = new Vector3(-0.75, 0.32, 0.58).normalize();
+const Y_AXIS = new Vector3(0, 1, 0);
 
 // Mesma convenção de UV da SphereGeometry (u=0 em lon -180), então os pontos
 // das rotas caem exatamente sobre as cidades da textura.
@@ -190,8 +191,12 @@ export class GlobeScene {
     return new GlobeScene(canvas, { ...opts, textures: { day, night, water } });
   }
 
-  constructor(canvas, { tier = "full", onReady, textures }) {
+  // lockDay: mantém o lado iluminado sempre voltado pra câmera (sem a noite girar
+  // pra frente). Usado pelo app, onde a Terra é fundo de tela. Padrão: desligado.
+  constructor(canvas, { tier = "full", onReady, textures, lockDay = false }) {
     this.canvas = canvas;
+    this.lockDay = lockDay;
+    this.earthSun = SUN.clone();
     this.tier = tier;
     this.running = false;
     this.pointer = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -237,7 +242,7 @@ export class GlobeScene {
             uDay: { value: textures.day },
             uNight: { value: textures.night },
             uWater: { value: textures.water },
-            uSun: { value: SUN },
+            uSun: { value: this.earthSun },
             uAtmo: { value: new Color("#5aa8ff") },
           },
         })
@@ -309,6 +314,7 @@ export class GlobeScene {
     this.root.rotation.z = 23.4 * DEG * 0.6;
     this.root.rotation.x = -0.22;
     this.globe.rotation.y = -((HOME.lon + 180) * DEG) + Math.PI / 2 - 0.5;
+    this.rot0 = this.globe.rotation.y;
 
     this.onResize = this.onResize.bind(this);
     this.tick = this.tick.bind(this);
@@ -372,6 +378,13 @@ export class GlobeScene {
 
     // Rotação oeste -> leste (sentido real da Terra)
     this.globe.rotation.y += dt * 0.06;
+    if (this.lockDay) {
+      this.earthSun
+        .copy(SUN)
+        .applyQuaternion(this.root.quaternion.clone().invert())
+        .applyAxisAngle(Y_AXIS, this.globe.rotation.y - this.rot0)
+        .applyQuaternion(this.root.quaternion);
+    }
     this.root.scale.setScalar(0.9 + 0.1 * e);
 
     const p = this.pointer;

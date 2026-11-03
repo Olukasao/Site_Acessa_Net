@@ -35,7 +35,8 @@ describe("SgpBackedTicketProvider.createTicket (POST /api/central/chamado/)", ()
       token: "test-token",
       timeoutMs: 15000,
       semOs: undefined,
-      mapping: { FALHA_REDE_ACESSO: { ocorrenciaTipo: "3", motivoOs: "12" } }
+      mapping: { FALHA_REDE_ACESSO: { ocorrenciaTipo: "3", motivoOs: "12" } },
+      documents: { ocorrenciaTipo: "10013", motivoOs: "2125", setor: "3" }
     });
 
     const result = await provider.createTicket({
@@ -67,7 +68,8 @@ describe("SgpBackedTicketProvider.createTicket (POST /api/central/chamado/)", ()
       token: "test-token",
       timeoutMs: 15000,
       semOs: undefined,
-      mapping: {}
+      mapping: {},
+      documents: { ocorrenciaTipo: "10013", motivoOs: "2125", setor: "3" }
     });
 
     await expect(
@@ -92,7 +94,8 @@ describe("SgpBackedTicketProvider.createTicket (POST /api/central/chamado/)", ()
       token: "test-token",
       timeoutMs: 15000,
       semOs: undefined,
-      mapping: { FALHA_REDE_ACESSO: { ocorrenciaTipo: "3", motivoOs: "12" } }
+      mapping: { FALHA_REDE_ACESSO: { ocorrenciaTipo: "3", motivoOs: "12" } },
+      documents: { ocorrenciaTipo: "10013", motivoOs: "2125", setor: "3" }
     });
 
     const result = await provider.createTicket({
@@ -118,7 +121,8 @@ describe("SgpBackedTicketProvider.createTicket (POST /api/central/chamado/)", ()
       token: "test-token",
       timeoutMs: 15000,
       semOs: undefined,
-      mapping: { FALHA_REDE_ACESSO: { ocorrenciaTipo: "3", motivoOs: "12" } }
+      mapping: { FALHA_REDE_ACESSO: { ocorrenciaTipo: "3", motivoOs: "12" } },
+      documents: { ocorrenciaTipo: "10013", motivoOs: "2125", setor: "3" }
     });
 
     await expect(

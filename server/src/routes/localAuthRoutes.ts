@@ -13,8 +13,14 @@ const documentFieldSchema = z
     documento: body.documento ?? body.document ?? body.cpf ?? ""
   }));
 
+/**
+ * Primeiro acesso: so aceita o token de verificacao devolvido por /verify-reset-code (apos OTP valido enviado
+ * por /first-access/request). "setupToken" ausente cai em 400 SETUP_TOKEN_REQUIRED (clientes antigos).
+ */
 const setupSchema = documentFieldSchema.and(
   z.object({
+    setupToken: z.string().min(20).max(256).optional(),
+    verificationToken: z.string().min(20).max(256).optional(),
     newPassword: z.string().min(1).max(128),
     confirmPassword: z.string().min(1).max(128).optional()
   })
@@ -53,28 +59,23 @@ export async function registerLocalAuthRoutes(app: FastifyInstance, container: A
     return container.localPasswordAuthService.checkAccess({ cpf: body.documento, ip: clientIp(request) });
   });
 
+  /** Primeiro acesso, passo 1: envia o codigo (OTP) para o e-mail cadastrado no SGP. Nao revela se o CPF existe. */
+  app.post("/api/auth/local/first-access/request", async (request) => {
+    const body = parseBody(documentFieldSchema, request.body);
+    return container.passwordResetService.requestFirstAccess({ cpf: body.documento, ip: clientIp(request) });
+  });
+
+  /** Primeiro acesso, passo 3: cria a senha com o token de verificacao. NAO devolve sessao -- o cliente faz login em seguida. */
   app.post("/api/auth/local/setup", async (request) => {
     const body = parseBody(setupSchema, request.body);
-    const result = await container.localPasswordAuthService.setupPassword({
+    return container.localPasswordAuthService.setupPassword({
       cpf: body.documento,
+      setupToken: body.setupToken ?? body.verificationToken,
       newPassword: body.newPassword,
       confirmPassword: body.confirmPassword,
       ip: clientIp(request),
       userAgent: userAgent(request)
     });
-    const payload = container.localPasswordAuthService.tokens.verifyAccessToken(result.accessToken);
-    const session = await container.authSessions.findById(payload.sessionId);
-    await container.centralActivityService.safeRecordLogin({
-      sessionId: payload.sessionId,
-      customerId: payload.sub,
-      cpfHash: session?.cpfHash ?? "",
-      request,
-      customerName: result.customer.name,
-      cpfMasked: result.customer.maskedCpf,
-      contractId: result.contracts[0]?.id,
-      metadata: { firstAccess: true, contractsCount: result.contracts.length }
-    });
-    return result;
   });
 
   app.post("/api/auth/local/login", async (request) => {
@@ -110,13 +111,15 @@ export async function registerLocalAuthRoutes(app: FastifyInstance, container: A
    * Diferente de forgot-password, ESTE endpoint revela se o CPF/CNPJ existe (404
    * quando nao existe) -- e um trade-off deliberado entre a UX pedida
    * ("Enviamos um codigo para lu***@gmail.com") e anti-enumeracao total.
-   * Mitigado por rate limit (reaproveita a mesma regra de forgot-password
-   * dentro do service). Se quiser anti-enumeracao total, o frontend pode
-   * parar de chamar este endpoint e mostrar so uma frase generica na Etapa 2.
+   * Mitigado por rate limit PROPRIO, por IP (6/10 min) e por CPF (5/h), ambos
+   * com 429 (ver PasswordResetService.getMaskedEmail) -- antes este comentario
+   * dizia isso mas nao existia limite nenhum. Se quiser anti-enumeracao total,
+   * o frontend pode parar de chamar este endpoint e mostrar so uma frase
+   * generica na Etapa 2.
    */
   app.post("/api/auth/local/forgot-password/masked-email", async (request) => {
     const body = parseBody(documentFieldSchema, request.body);
-    return container.passwordResetService.getMaskedEmail({ cpf: body.documento });
+    return container.passwordResetService.getMaskedEmail({ cpf: body.documento, ip: clientIp(request) });
   });
 
   app.post("/api/auth/local/verify-reset-code", async (request) => {

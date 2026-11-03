@@ -7,6 +7,7 @@ import type { ContractProvider, TicketProvider, TicketSummaryWithRaw } from "../
 import { mapSgpOsToCustomerVisit } from "../integrations/sgp/sgpMapper.js";
 import type { ContractSummary, PublicTicketVisit, TicketInternalStatus } from "../types.js";
 import { AppError } from "../errors.js";
+import type { TicketRatingRepository } from "../repositories/ticketRatingRepository.js";
 
 /** Teto de linhas carregadas em memoria para filtrar/ordenar por status ou updatedAt (que so existem ao vivo no SGP, nunca em coluna SQL) -- acima disso, avisa pra estreitar o periodo em vez de truncar silenciosamente. */
 const STATUS_ENRICH_ROW_CAP = 1000;
@@ -14,6 +15,15 @@ const STATUS_ENRICH_ROW_CAP = 1000;
 const EXPORT_ROW_CAP = 5000;
 /** TTL do cache de ocorrencias SGP por contrato -- evita refazer a mesma consulta a cada linha da mesma pagina/exportacao. */
 const SGP_CACHE_TTL_MS = 60_000;
+/**
+ * Lista vazia quase sempre e falha da consulta (o provider devolve [] quando o SGP erra/estoura o tempo), nao "contrato sem
+ * chamados" -- guardar 60 s deixava todos os chamados do contrato como "Indisponivel" por um minuto. Vazio expira rapido.
+ */
+const SGP_CACHE_EMPTY_TTL_MS = 5_000;
+/** Consultas ao SGP em paralelo ao montar uma pagina: dezenas ao mesmo tempo estouram tempo/limite do SGP e viram "Indisponivel". */
+const SGP_FETCH_CONCURRENCY = 6;
+/** Chamado recem-aberto pode ainda nao constar na lista do SGP: ate esta idade, nao achar o protocolo merece uma segunda consulta. */
+const RECENT_TICKET_MS = 48 * 60 * 60 * 1000;
 
 export type TicketStatusFilter = TicketInternalStatus;
 
@@ -109,7 +119,8 @@ export class AdminTicketService {
   constructor(
     private readonly activityRepository: CentralActivityRepository,
     private readonly ticketProvider: TicketProvider,
-    private readonly contractProvider: ContractProvider
+    private readonly contractProvider: ContractProvider,
+    private readonly ratings?: TicketRatingRepository
   ) {}
 
   async listTickets(filters: TicketListFilters): Promise<TicketListResult> {
@@ -178,7 +189,7 @@ export class AdminTicketService {
   }
 
   async getDetail(protocol: string): Promise<TicketDetail> {
-    const row = await this.findActivityRowByProtocol(protocol);
+    const row = (await this.findActivityRowByProtocol(protocol)) ?? (await this.rowFromRating(protocol));
     if (!row || !row.contractId) {
       throw new AppError(404, "TICKET_NOT_FOUND", "Chamado não encontrado.");
     }
@@ -294,6 +305,30 @@ export class AdminTicketService {
     return this.enrichRows(rows);
   }
 
+  /** Chamado aberto fora da Central (pela equipe, no SGP) não tem OPEN_TICKET; o pedido de avaliação guarda cliente e contrato. */
+  private async rowFromRating(protocol: string): Promise<ActivityLogEntry | null> {
+    const rating = await this.ratings?.findByProtocol(protocol);
+    if (!rating) return null;
+    const names = await this.activityRepository.findCustomerNames([rating.customerId]);
+    return {
+      id: 0,
+      customerId: rating.customerId,
+      cpfHash: null,
+      cpfMasked: null,
+      customerName: names.get(rating.customerId) ?? null,
+      sgpCustomerId: null,
+      contractId: rating.contractId,
+      sessionId: null,
+      eventType: "OPEN_TICKET",
+      page: null,
+      metadata: { protocol, title: rating.ticketTitle },
+      ipHash: null,
+      userAgent: null,
+      deviceType: null,
+      createdAt: new Date(rating.createdAt)
+    };
+  }
+
   private async findActivityRowByProtocol(protocol: string): Promise<ActivityLogEntry | null> {
     const result = await this.activityRepository.listActivity({
       range: ALL_TIME_RANGE,
@@ -309,7 +344,23 @@ export class AdminTicketService {
 
   private async enrichRows(rows: ActivityLogEntry[]): Promise<AdminTicketListItem[]> {
     const distinctContractIds = [...new Set(rows.map((row) => row.contractId).filter((id): id is string => Boolean(id)))];
-    await Promise.all(distinctContractIds.map((contractId) => this.getContractOccurrences(contractId)));
+    await mapWithLimit(distinctContractIds, SGP_FETCH_CONCURRENCY, (contractId) => this.getContractOccurrences(contractId));
+
+    // Segunda chance: contrato cuja lista veio vazia (provavel falha) ou com chamado recente que ainda nao apareceu.
+    const retryContractIds = distinctContractIds.filter((contractId) => {
+      const items = this.contractOccurrenceCache.get(contractId)?.items ?? [];
+      if (items.length === 0) return true;
+      return rows.some((row) => {
+        const protocol = row.metadata?.protocol as string | undefined;
+        return (
+          row.contractId === contractId &&
+          Boolean(protocol) &&
+          Date.now() - row.createdAt.getTime() < RECENT_TICKET_MS &&
+          !items.some((occurrence) => occurrence.protocol === protocol)
+        );
+      });
+    });
+    await mapWithLimit(retryContractIds, SGP_FETCH_CONCURRENCY, (contractId) => this.getContractOccurrences(contractId, true));
 
     return rows.map((row) => {
       const protocol = (row.metadata?.protocol as string | undefined) ?? null;
@@ -337,9 +388,9 @@ export class AdminTicketService {
     });
   }
 
-  private async getContractOccurrences(contractId: string): Promise<TicketSummaryWithRaw[]> {
+  private async getContractOccurrences(contractId: string, force = false): Promise<TicketSummaryWithRaw[]> {
     const cached = this.contractOccurrenceCache.get(contractId);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (!force && cached && cached.expiresAt > Date.now()) {
       return cached.items;
     }
 
@@ -350,9 +401,23 @@ export class AdminTicketService {
       items = [];
     }
 
-    this.contractOccurrenceCache.set(contractId, { expiresAt: Date.now() + SGP_CACHE_TTL_MS, items });
+    const ttl = items.length > 0 ? SGP_CACHE_TTL_MS : SGP_CACHE_EMPTY_TTL_MS;
+    this.contractOccurrenceCache.set(contractId, { expiresAt: Date.now() + ttl, items });
     return items;
   }
+}
+
+/** Roda `task` para cada item com no maximo `limit` em andamento ao mesmo tempo. */
+async function mapWithLimit<T>(items: T[], limit: number, task: (item: T) => Promise<unknown>): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next];
+      next += 1;
+      await task(item as T);
+    }
+  });
+  await Promise.all(workers);
 }
 
 function sortItems(items: AdminTicketListItem[], sort: TicketListFilters["sort"]): AdminTicketListItem[] {

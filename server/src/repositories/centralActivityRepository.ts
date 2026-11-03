@@ -319,6 +319,8 @@ export interface CentralActivityRepository {
   }): Promise<ClientListResult>;
   getClient(customerId: string, range: AnalyticsRange): Promise<(ClientAnalyticsRow & { recentActivity: ActivityLogEntry[] }) | null>;
   listEventTypes(): Promise<string[]>;
+  /** Nome mais recente conhecido de cada cliente (customerId -> nome); ids sem nome ficam de fora. */
+  findCustomerNames(customerIds: string[]): Promise<Map<string, string>>;
 }
 
 export class SqliteCentralActivityRepository implements CentralActivityRepository {
@@ -462,6 +464,19 @@ export class SqliteCentralActivityRepository implements CentralActivityRepositor
       .prepare("SELECT DISTINCT event_type AS label FROM central_activity_logs ORDER BY event_type ASC")
       .all() as Array<{ label: string }>;
     return rows.map((row) => row.label);
+  }
+
+  async findCustomerNames(customerIds: string[]): Promise<Map<string, string>> {
+    const ids = [...new Set(customerIds)].filter(Boolean);
+    if (ids.length === 0) return new Map();
+    const marks = ids.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT customer_id, MAX(customer_name) AS name FROM central_activity_logs
+         WHERE customer_id IN (${marks}) AND customer_name IS NOT NULL AND customer_name <> '' GROUP BY customer_id`
+      )
+      .all(...ids) as Array<{ customer_id: string; name: string }>;
+    return new Map(rows.map((row) => [row.customer_id, row.name]));
   }
 }
 
@@ -620,6 +635,18 @@ export class MysqlCentralActivityRepository implements CentralActivityRepository
   async listEventTypes(): Promise<string[]> {
     const [rows] = await this.pool.execute("SELECT DISTINCT event_type AS label FROM central_activity_logs ORDER BY event_type ASC");
     return (rows as Array<{ label: string }>).map((row) => row.label);
+  }
+
+  async findCustomerNames(customerIds: string[]): Promise<Map<string, string>> {
+    const ids = [...new Set(customerIds)].filter(Boolean);
+    if (ids.length === 0) return new Map();
+    const marks = ids.map(() => "?").join(", ");
+    const [rows] = await this.pool.execute(
+      `SELECT customer_id, MAX(customer_name) AS name FROM central_activity_logs
+       WHERE customer_id IN (${marks}) AND customer_name IS NOT NULL AND customer_name <> '' GROUP BY customer_id`,
+      ids
+    );
+    return new Map((rows as Array<{ customer_id: string; name: string }>).map((row) => [row.customer_id, row.name]));
   }
 }
 

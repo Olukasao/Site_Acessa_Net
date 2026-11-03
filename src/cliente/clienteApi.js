@@ -385,6 +385,33 @@ function getErrorPayload(payload) {
  */
 let refreshInFlight = null;
 
+const SESSION_EXPIRED_FLAG = "acessanet.sessionExpired";
+
+/** Avisa a tela que a sessão acabou (refresh recusado): ela volta ao login com uma mensagem, em vez de ficar numa tela vazia. */
+function notifySessionExpired() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(SESSION_EXPIRED_FLAG, "1");
+  } catch {
+    // sem sessionStorage: só perde a mensagem
+  }
+  window.dispatchEvent(new Event("acessanet:session-expired"));
+}
+
+/** Lê (e apaga) o aviso de sessão expirada para o login mostrar uma vez. */
+export function consumeSessionExpiredNotice() {
+  if (typeof window === "undefined") return "";
+  try {
+    if (window.sessionStorage.getItem(SESSION_EXPIRED_FLAG) === "1") {
+      window.sessionStorage.removeItem(SESSION_EXPIRED_FLAG);
+      return "Sua sessão expirou. Entre novamente.";
+    }
+  } catch {
+    // ignora
+  }
+  return "";
+}
+
 async function refreshAccessToken() {
   if (refreshInFlight) {
     return refreshInFlight;
@@ -393,6 +420,7 @@ async function refreshAccessToken() {
   refreshInFlight = (async () => {
     const { refreshToken } = readTokens();
     if (!refreshToken) {
+      notifySessionExpired();
       return null;
     }
 
@@ -409,6 +437,7 @@ async function refreshAccessToken() {
 
     if (!response.ok || !payload?.accessToken || !payload?.refreshToken) {
       clearTokens();
+      notifySessionExpired();
       return null;
     }
 
@@ -534,9 +563,35 @@ export async function checkLocalAccess(cpf) {
   });
 }
 
-/** Primeiro acesso: cria a senha própria do app e já retorna uma sessão completa. */
-export async function setupLocalPassword(cpf, newPassword, confirmPassword) {
+const DEMO_RESET_TOKEN = "demo-reset-token";
+
+/**
+ * Primeiro acesso, passo 1 (prova de posse): pede o envio de um código de 6 dígitos para o e-mail cadastrado
+ * no SGP. Respostas: { status: "sent", maskedEmail } | { status: "has_password", message } |
+ * { status: "unavailable", message } (CPF não encontrado OU cliente sem e-mail -- mesma resposta; a mensagem
+ * orienta falar com o suporte). O passo 2 reaproveita verifyResetCode (OTP) e o 3 é setupLocalPassword.
+ */
+export async function requestFirstAccessCode(cpf) {
   if (isDemoDocument(cpf)) {
+    return { status: "sent", maskedEmail: "de***@exemplo.com" };
+  }
+
+  return clienteRequest("/api/auth/local/first-access/request", {
+    method: "POST",
+    auth: false,
+    body: { cpf: normalizeDocument(cpf) }
+  });
+}
+
+/**
+ * Primeiro acesso, passo 3: cria a senha própria do app usando o token devolvido por verifyResetCode (OTP
+ * validado). NÃO devolve sessão -- quem chama faz o login normal (loginLocal) logo em seguida.
+ */
+export async function setupLocalPassword(cpf, verificationToken, newPassword, confirmPassword) {
+  if (isDemoDocument(cpf)) {
+    if (verificationToken !== DEMO_RESET_TOKEN) {
+      throw new ClienteApiError(400, "SETUP_TOKEN_INVALID", "Verificação expirada ou inválida. Solicite um novo código.");
+    }
     if (newPassword !== confirmPassword) {
       throw new ClienteApiError(400, "VALIDATION_ERROR", "As senhas não coincidem.");
     }
@@ -545,25 +600,14 @@ export async function setupLocalPassword(cpf, newPassword, confirmPassword) {
     }
 
     markDemoPasswordSet();
-    const response = demoAuthResult();
-    saveTokens(response.accessToken, response.refreshToken);
-    clearChatTokenCache();
-    return response;
+    return { ok: true };
   }
 
-  const response = await clienteRequest("/api/auth/local/setup", {
+  return clienteRequest("/api/auth/local/setup", {
     method: "POST",
     auth: false,
-    body: { cpf: normalizeDocument(cpf), newPassword, confirmPassword }
+    body: { cpf: normalizeDocument(cpf), setupToken: verificationToken, newPassword, confirmPassword }
   });
-
-  if (!response?.accessToken || !response?.refreshToken) {
-    throw new ClienteApiError(500, "INVALID_LOGIN_RESPONSE", "A API retornou uma sessão inválida.");
-  }
-
-  saveTokens(response.accessToken, response.refreshToken);
-  clearChatTokenCache();
-  return response;
 }
 
 /**
@@ -601,8 +645,6 @@ export async function getMaskedEmailForReset(cpf) {
     body: { cpf: normalizeDocument(cpf) }
   });
 }
-
-const DEMO_RESET_TOKEN = "demo-reset-token";
 
 /** Etapa 2: valida o código OTP e devolve um resetToken de uso único (10 min) para a Etapa 3. */
 export async function verifyResetCode(cpf, code) {
@@ -946,4 +988,21 @@ export function createClientMessageId() {
   }
 
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+/** Chamados encerrados esperando a nota do cliente. Recurso opcional: qualquer falha vira "nada pendente". */
+export async function getPendingRatings() {
+  try {
+    const response = await clienteRequest("/v1/ratings/pending");
+    return Array.isArray(response?.pending) ? response.pending : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function submitRating({ protocol, rating, comment }) {
+  return clienteRequest("/v1/ratings", {
+    method: "POST",
+    body: { protocol, rating, ...(comment?.trim() ? { comment: comment.trim() } : {}) }
+  });
 }

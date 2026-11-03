@@ -13,10 +13,12 @@ import { registerAuthRoutes } from "./routes/authRoutes.js";
 import { registerLocalAuthRoutes } from "./routes/localAuthRoutes.js";
 import { registerContractRoutes } from "./routes/contractRoutes.js";
 import { registerSupportRoutes } from "./routes/supportRoutes.js";
+import { registerPushRoutes } from "./routes/pushRoutes.js";
 import { registerSignatureRoutes } from "./routes/signatureRoutes.js";
 import { registerAdminAuthRoutes } from "./routes/adminAuthRoutes.js";
 import { registerAdminNoticeRoutes } from "./routes/adminNoticeRoutes.js";
 import { registerNoticeRoutes } from "./routes/noticeRoutes.js";
+import { registerAppVersionRoutes } from "./routes/appVersionRoutes.js";
 import { registerDebugOltCloudRoutes } from "./routes/debugOltCloudRoutes.js";
 import { registerCentralNetworkStatusRoutes } from "./routes/centralNetworkStatusRoutes.js";
 import { registerCentralActivityRoutes } from "./routes/centralActivityRoutes.js";
@@ -24,11 +26,19 @@ import { registerAdminNetworkIncidentRoutes } from "./routes/adminNetworkInciden
 import { registerAdminOltCloudRoutes } from "./routes/adminOltCloudRoutes.js";
 import { registerAdminAnalyticsRoutes } from "./routes/adminAnalyticsRoutes.js";
 import { registerAdminTicketRoutes } from "./routes/adminTicketRoutes.js";
+import { registerAdminRatingRoutes } from "./routes/adminRatingRoutes.js";
+import { registerAdminLocationRoutes } from "./routes/adminLocationRoutes.js";
+import { registerLocationRoutes } from "./routes/locationRoutes.js";
+import { registerRatingRoutes } from "./routes/ratingRoutes.js";
+import { registerAppCrashRoutes } from "./routes/appCrashRoutes.js";
+import { registerAdminAppCrashRoutes } from "./routes/adminAppCrashRoutes.js";
 import { registerBugReportRoutes } from "./routes/bugReportRoutes.js";
 import { registerJobApplicationRoutes } from "./routes/jobApplicationRoutes.js";
 import { registerPlanLeadRoutes } from "./routes/planLeadRoutes.js";
 import { registerContractRequestRoutes } from "./routes/contractRequestRoutes.js";
 import { registerAdminMarketingRoutes } from "./routes/adminMarketingRoutes.js";
+import { registerMarketingFeedRoutes } from "./routes/marketingFeedRoutes.js";
+import { registerChamadosFeedRoutes } from "./routes/chamadosFeedRoutes.js";
 import { registerAdminSellerRoutes } from "./routes/adminSellerRoutes.js";
 import { registerWifiRoutes } from "./wifi/wifiRoutes.js";
 import { roleCanReachAdminPath } from "./auth/adminPermissions.js";
@@ -286,6 +296,7 @@ export async function buildApp(container: AppContainer = createContainer()) {
       "GET /api/frontend-version",
       "POST /api/auth/local/check",
       "POST /api/auth/local/setup",
+      "POST /api/auth/local/first-access/request",
       "POST /api/auth/local/login",
       "POST /api/auth/local/forgot-password",
       "POST /api/auth/local/forgot-password/masked-email",
@@ -300,11 +311,19 @@ export async function buildApp(container: AppContainer = createContainer()) {
       "GET /api/contratacao/planos",
       "GET /api/contratacao/planos/:id",
       "POST /api/contratacao/solicitacoes",
+      /** Relatorio de erros do app: sem login (o app pode quebrar antes do login); limite por IP e por aparelho, texto filtrado (ver appCrashRoutes.ts). */
+      "POST /v1/app-crashes",
+      /** Versao minima do app Android: o app consulta antes do login e nao leva dado de cliente (ver appVersionRoutes.ts). */
+      "GET /v1/app/version",
       /** Wi-Fi publico: cadastro (limite por IP) e autorizacao do RADIUS (token proprio, ver wifiRoutes.ts). */
       "POST /api/wifi/cadastro",
       "POST /api/wifi/radius/authorize",
       /** Feed de contratacoes pendentes para o chat interno (token proprio, ver contractRequestRoutes.ts). */
       "GET /api/integracoes/contratacoes/pendentes",
+      "GET /api/integracoes/marketing/resumo",
+      /** Chamados abertos pelo site, para a aba Chamados do Workspace (mesmo token do resumo acima). */
+      "GET /api/integracoes/marketing/chamados",
+      "GET /api/integracoes/marketing/chamados/:protocol",
       /**
        * Rota de teste da integracao OLT Cloud -- nao usa sessao de cliente,
        * tem sua propria protecao (x-debug-token + so registrada fora de
@@ -348,8 +367,11 @@ export async function buildApp(container: AppContainer = createContainer()) {
 
   await registerContractRoutes(app, container);
   await registerSupportRoutes(app, container);
+  await registerLocationRoutes(app, container);
+  await registerPushRoutes(app, container);
   await registerSignatureRoutes(app, container);
   await registerNoticeRoutes(app, container);
+  await registerAppVersionRoutes(app);
   await registerCentralActivityRoutes(app, container);
   await registerBugReportRoutes(app, container);
   await registerJobApplicationRoutes(app, container);
@@ -359,11 +381,18 @@ export async function buildApp(container: AppContainer = createContainer()) {
   await registerAdminNoticeRoutes(app, container);
   await registerAdminAnalyticsRoutes(app, container);
   await registerAdminTicketRoutes(app, container);
+  await registerAdminRatingRoutes(app, container);
+  await registerAdminLocationRoutes(app, container);
+  await registerRatingRoutes(app, container);
+  await registerAppCrashRoutes(app, container);
+  await registerAdminAppCrashRoutes(app, container);
   await registerDebugOltCloudRoutes(app, container);
   await registerCentralNetworkStatusRoutes(app, container);
   await registerAdminNetworkIncidentRoutes(app, container);
   await registerAdminOltCloudRoutes(app, container);
   await registerAdminMarketingRoutes(app, container);
+  await registerMarketingFeedRoutes(app, container);
+  await registerChamadosFeedRoutes(app, container);
   await registerAdminSellerRoutes(app, container);
   await registerWifiRoutes(app, container);
 

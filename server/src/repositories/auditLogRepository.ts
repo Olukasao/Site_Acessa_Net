@@ -32,7 +32,8 @@ export type AuthFailureReason =
   | "RESET_TOKEN_INVALID"
   | "RESET_TOKEN_EXPIRED"
   | "EMAIL_UNAVAILABLE"
-  | "EMAIL_SEND_FAILED";
+  | "EMAIL_SEND_FAILED"
+  | "REFRESH_TOKEN_REUSE";
 
 export interface AuthAuditLogInput {
   eventType: AuthAuditEventType;

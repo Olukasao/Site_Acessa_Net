@@ -23,7 +23,7 @@ const CREATE_RATE_RULE = { limit: 3, windowMs: 60 * 60 * 1000, cooldownMs: 60 * 
  */
 const FILE_TYPES = {
   pdf: { mime: "application/pdf", magic: [0x25, 0x50, 0x44, 0x46] }, // %PDF
-  doc: { mime: "application/msword", magic: [0xd0, 0xcf, 0x11, 0xe0] }, // OLE2
+  // DOC (Word antigo, binario) nao e aceito: o painel so exibe PDF e DOCX na pagina (sem baixar).
   docx: {
     mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     magic: [0x50, 0x4b, 0x03, 0x04] // ZIP
@@ -68,7 +68,7 @@ function resolveFile(name: string, base64: string) {
   const extension = name.toLowerCase().split(".").pop() || "";
   const type = FILE_TYPES[extension as keyof typeof FILE_TYPES];
   if (!type) {
-    throw new AppError(400, "INVALID_FILE_TYPE", "Envie o currículo em PDF, DOC ou DOCX.");
+    throw new AppError(400, "INVALID_FILE_TYPE", "Envie o currículo em PDF ou DOCX.");
   }
 
   const data = Buffer.from(base64.replace(/^data:[^,]*,/, ""), "base64");
@@ -79,7 +79,11 @@ function resolveFile(name: string, base64: string) {
     throw new AppError(413, "FILE_TOO_LARGE", "O arquivo deve ter no máximo 5 MB.");
   }
   if (!type.magic.every((byte, index) => data[index] === byte)) {
-    throw new AppError(400, "INVALID_FILE_TYPE", "O arquivo não parece ser um PDF, DOC ou DOCX válido.");
+    throw new AppError(400, "INVALID_FILE_TYPE", "O arquivo não parece ser um PDF ou DOCX válido.");
+  }
+  // DOCX e um ZIP: qualquer .zip renomeado passaria so pela assinatura. Um DOCX de verdade tem partes em word/.
+  if (extension === "docx" && !data.includes(Buffer.from("word/"))) {
+    throw new AppError(400, "INVALID_FILE_TYPE", "O arquivo não parece ser um PDF ou DOCX válido.");
   }
 
   /** Nome so com caracteres seguros pro header de download. */
@@ -90,7 +94,7 @@ function resolveFile(name: string, base64: string) {
 async function recordAdminAction(
   request: FastifyRequest,
   container: AppContainer,
-  action: "VIEW_JOB_APPLICATIONS" | "DOWNLOAD_JOB_APPLICATION" | "UPDATE_JOB_APPLICATION",
+  action: "VIEW_JOB_APPLICATIONS" | "VIEW_JOB_APPLICATION" | "UPDATE_JOB_APPLICATION",
   afterSnapshot?: Record<string, unknown>
 ) {
   const admin = requireAdminAuth(request);
@@ -106,10 +110,23 @@ async function recordAdminAction(
 }
 
 export async function registerJobApplicationRoutes(app: FastifyInstance, container: AppContainer) {
-  app.post("/api/careers/applications", { bodyLimit: CREATE_BODY_LIMIT }, async (request, reply) => {
+  app.post(
+    "/api/careers/applications",
+    {
+      bodyLimit: CREATE_BODY_LIMIT,
+      /**
+       * B8: consome o limite por IP ANTES de o Fastify ler/parsear o corpo (ate 8 MB de JSON/base64). Antes, o
+       * parse acontecia primeiro e so depois o limite era checado -- cada tentativa barrada ja tinha custado o
+       * parse inteiro. Efeito colateral aceito: pedidos invalidos tambem contam.
+       */
+      preParsing: async (request, _reply, payload) => {
+        container.rateLimiter.consume(`job_application:ip:${sha256(request.ip || "unknown")}`, CREATE_RATE_RULE);
+        return payload;
+      }
+    },
+    async (request, reply) => {
     const body = parseBody(createSchema, request.body);
     const ipHash = sha256(request.ip || "unknown");
-    container.rateLimiter.consume(`job_application:ip:${ipHash}`, CREATE_RATE_RULE);
 
     if (body.website) {
       // Robo: responde como sucesso pra nao ensinar o que foi bloqueado.
@@ -133,7 +150,8 @@ export async function registerJobApplicationRoutes(app: FastifyInstance, contain
 
     reply.code(201);
     return { ok: true, id: created.id };
-  });
+    }
+  );
 
   app.get("/admin/api/job-applications/summary", async () => {
     return { newCount: await container.jobApplications.countNew() };
@@ -151,11 +169,14 @@ export async function registerJobApplicationRoutes(app: FastifyInstance, contain
     if (!file) {
       throw new AppError(404, "NOT_FOUND", "Currículo não encontrado.");
     }
-    await recordAdminAction(request, container, "DOWNLOAD_JOB_APPLICATION", { applicationId: id });
+    await recordAdminAction(request, container, "VIEW_JOB_APPLICATION", { applicationId: id });
 
     reply
       .header("Content-Type", file.fileMime)
-      .header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`)
+      // Só exibição: o painel renderiza o PDF na página (pdf.js), sem botão de baixar. "inline" + no-store evitam que
+      // o navegador trate a resposta como download ou guarde cópia em cache.
+      .header("Content-Disposition", "inline")
+      .header("Cache-Control", "no-store")
       .header("X-Content-Type-Options", "nosniff");
     return reply.send(file.data);
   });

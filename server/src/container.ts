@@ -3,6 +3,12 @@ import { TokenService } from "./auth/tokenService.js";
 import { LocalPasswordAuthService } from "./auth/localPasswordAuthService.js";
 import { CpfResolver } from "./auth/cpfResolver.js";
 import { PasswordResetService } from "./auth/passwordResetService.js";
+import { PersistentRateLimiter } from "./auth/persistentRateLimiter.js";
+import { SqlitePushDeviceRepository, MysqlPushDeviceRepository, type PushDeviceRepository } from "./repositories/pushDeviceRepository.js";
+import { SqliteAppCrashRepository, MysqlAppCrashRepository, type AppCrashRepository } from "./repositories/appCrashRepository.js";
+import { SqliteLocationRequestRepository, MysqlLocationRequestRepository, type LocationRequestRepository } from "./repositories/locationRequestRepository.js";
+import { SqliteTicketRatingRepository, MysqlTicketRatingRepository, type TicketRatingRepository } from "./repositories/ticketRatingRepository.js";
+import { SqliteRateLimitRepository, MysqlRateLimitRepository, type RateLimitRepository } from "./repositories/rateLimitRepository.js";
 import { SmtpMailer, UnconfiguredMailer, type Mailer } from "./email/mailer.js";
 import type { AppConfig, AppConfigOverrides } from "./config.js";
 import { loadConfig } from "./config.js";
@@ -56,6 +62,8 @@ import {
   type PasswordResetRepository
 } from "./repositories/passwordResetRepository.js";
 import { SupportService } from "./support/supportService.js";
+import { LocationService } from "./support/locationService.js";
+import { DocumentsService } from "./support/documentsService.js";
 import { AdminTicketService } from "./support/adminTicketService.js";
 import { PaymentPromiseService } from "./billing/paymentPromiseService.js";
 import { AdminAuthService } from "./services/adminAuthService.js";
@@ -123,15 +131,23 @@ import {
 import { NoticeService } from "./notices/noticeService.js";
 import { SignatureService } from "./signatures/signatureService.js";
 import { CentralActivityService } from "./analytics/centralActivityService.js";
+import { MarketingStatsRepository } from "./analytics/marketingStats.js";
 import { BugReportService } from "./services/bugReportService.js";
 
 export interface AppContainer {
   config: AppConfig;
   store: InMemoryStore;
   rateLimiter: InMemoryRateLimiter;
+  persistentLimiter: PersistentRateLimiter;
+  pushDevices: PushDeviceRepository;
+  ticketRatings: TicketRatingRepository;
+  locationRequests: LocationRequestRepository;
+  appCrashes: AppCrashRepository;
   localPasswordAuthService: LocalPasswordAuthService;
   passwordResetService: PasswordResetService;
   supportService: SupportService;
+  documentsService: DocumentsService;
+  locationService: LocationService;
   /** Le-somente: espelha pro admin os chamados abertos via Central (log de atividade OPEN_TICKET), enriquecidos ao vivo com o SGP -- ver server/src/support/adminTicketService.ts. */
   adminTicketService: AdminTicketService;
   /** Promessa de pagamento / liberacao por confianca -- SEMPRE chama o SGP de verdade, nunca simulado. Ver server/src/billing/paymentPromiseService.ts. */
@@ -162,6 +178,8 @@ export interface AppContainer {
   signatureService: SignatureService;
   centralActivityRepository: CentralActivityRepository;
   centralActivityService: CentralActivityService;
+  /** Numeros agregados do site para a aba Marketing do Workspace. */
+  marketingStats: MarketingStatsRepository;
   bugReports: BugReportRepository;
   bugReportService: BugReportService;
   jobApplications: JobApplicationRepository;
@@ -287,6 +305,11 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
   let loginAttempts: LoginAttemptRepository;
   let authAuditLog: AuditLogRepository;
   let passwordResets: PasswordResetRepository;
+  let rateLimitRepo: RateLimitRepository;
+  let pushDevices: PushDeviceRepository;
+  let ticketRatings: TicketRatingRepository;
+  let locationRequests: LocationRequestRepository;
+  let appCrashes: AppCrashRepository;
   let adminUsers: AdminUserRepository;
   let adminSessions: AdminSessionRepository;
   let adminLoginAttempts: AdminLoginAttemptRepository;
@@ -300,6 +323,7 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
   let contractRequests: ContractRequestRepository;
   let wifi: WifiRepository;
   let networkIncidents: NetworkIncidentRepository;
+  let marketingStats: MarketingStatsRepository;
   let dbHealthCheck: () => Promise<boolean>;
   let dbReady: Promise<void>;
 
@@ -320,6 +344,11 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     loginAttempts = new MysqlLoginAttemptRepository(pool);
     authAuditLog = new MysqlAuditLogRepository(pool);
     passwordResets = new MysqlPasswordResetRepository(pool);
+    rateLimitRepo = new MysqlRateLimitRepository(pool);
+    pushDevices = new MysqlPushDeviceRepository(pool);
+    ticketRatings = new MysqlTicketRatingRepository(pool);
+    locationRequests = new MysqlLocationRequestRepository(pool);
+    appCrashes = new MysqlAppCrashRepository(pool);
     adminUsers = new MysqlAdminUserRepository(pool);
     adminSessions = new MysqlAdminSessionRepository(pool);
     adminLoginAttempts = new MysqlAdminLoginAttemptRepository(pool);
@@ -333,6 +362,7 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     contractRequests = new MysqlContractRequestRepository(pool);
     wifi = new MysqlWifiRepository(pool);
     networkIncidents = new MysqlNetworkIncidentRepository(pool);
+    marketingStats = new MarketingStatsRepository(async (sql, params) => (await pool.query(sql, params))[0] as Array<Record<string, unknown>>);
   } else {
     const db = createDatabase(config.sqlitePath);
     dbReady = Promise.resolve();
@@ -350,6 +380,11 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     loginAttempts = new SqliteLoginAttemptRepository(db);
     authAuditLog = new SqliteAuditLogRepository(db);
     passwordResets = new SqlitePasswordResetRepository(db);
+    rateLimitRepo = new SqliteRateLimitRepository(db);
+    pushDevices = new SqlitePushDeviceRepository(db);
+    ticketRatings = new SqliteTicketRatingRepository(db);
+    locationRequests = new SqliteLocationRequestRepository(db);
+    appCrashes = new SqliteAppCrashRepository(db);
     adminUsers = new SqliteAdminUserRepository(db);
     adminSessions = new SqliteAdminSessionRepository(db);
     adminLoginAttempts = new SqliteAdminLoginAttemptRepository(db);
@@ -363,6 +398,7 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     contractRequests = new SqliteContractRequestRepository(db);
     wifi = new SqliteWifiRepository(db);
     networkIncidents = new SqliteNetworkIncidentRepository(db);
+    marketingStats = new MarketingStatsRepository(async (sql, params) => db.prepare(sql).all(...params) as Array<Record<string, unknown>>);
   }
 
   const mailer: Mailer = config.smtp.enabled ? new SmtpMailer(config.smtp) : new UnconfiguredMailer();
@@ -374,8 +410,11 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     );
   }
 
-  const cpfResolver = new CpfResolver(store, sgpClient);
+  const cpfResolver = new CpfResolver(store, sgpClient, sgpClient.customerIdSecret);
   const clientRegionResolver = new ClientRegionResolver(sgpClient);
+
+  /** Limites por CPF/IP com contador gravado no banco (sobrevive a reinicio). */
+  const persistentLimiter = new PersistentRateLimiter(rateLimitRepo);
 
   const localPasswordAuthService = new LocalPasswordAuthService(
     config,
@@ -384,7 +423,9 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     authSessions,
     loginAttempts,
     authAuditLog,
-    rateLimiter
+    rateLimiter,
+    persistentLimiter,
+    passwordResets
   );
 
   const passwordResetService = new PasswordResetService(
@@ -395,7 +436,8 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     passwordResets,
     mailer,
     authAuditLog,
-    rateLimiter
+    rateLimiter,
+    persistentLimiter
   );
 
   const supportService = new SupportService(
@@ -407,7 +449,10 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     sgpClient
   );
 
-  const adminTicketService = new AdminTicketService(centralActivityRepository, providers.tickets, providers.contracts);
+  const documentsService = new DocumentsService(store, sgpClient, config.sgp.chamado);
+  const locationService = new LocationService(locationRequests, store, sgpClient, providers.tickets, (customerId) => supportService.listTickets(customerId));
+
+  const adminTicketService = new AdminTicketService(centralActivityRepository, providers.tickets, providers.contracts, ticketRatings);
 
   const adminAuthService = new AdminAuthService(config, adminUsers, adminSessions, adminLoginAttempts, rateLimiter);
   const noticeService = new NoticeService(noticeRepository, noticeViews, adminAuditLog);
@@ -420,9 +465,16 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     config,
     store,
     rateLimiter,
+    persistentLimiter,
+    pushDevices,
+    ticketRatings,
+    locationRequests,
+    appCrashes,
     localPasswordAuthService,
     passwordResetService,
     supportService,
+    documentsService,
+    locationService,
     adminTicketService,
     paymentPromiseService,
     providers,
@@ -443,6 +495,7 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     signatureService,
     centralActivityRepository,
     centralActivityService,
+    marketingStats,
     bugReports,
     bugReportService,
     jobApplications,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
@@ -22,12 +22,13 @@ import {
   Plus,
   Power,
   RefreshCw,
-  Router,
   Search,
   ShieldCheck,
   Smartphone,
   Monitor,
   Trash2,
+  Star,
+  MapPin,
   Trophy,
   Users
 } from "lucide-react";
@@ -41,11 +42,14 @@ import {
   adminMe,
   createNotice,
   deleteNotice,
-  downloadJobApplicationFile,
   duplicateNotice,
   exportChamadosCsv,
   getChamadoDetail,
   getChamadosSummary,
+  listRatings,
+  listAppCrashes,
+  getAppCrash,
+  updateAppCrash,
   getContractRequest,
   getContractRequestsSummary,
   getNotice,
@@ -66,6 +70,11 @@ import {
 	  listJobApplications,
 	  listMarketingLeads,
 	  removeMarketingLead,
+	  deleteRating,
+	  listLocations,
+	  approveLocation,
+	  rejectLocation,
+	  deleteContractRatings,
 	  listContractMarketingLeads,
 	getSellerRanking,
 	listSellers,
@@ -74,7 +83,6 @@ import {
 	updateSeller,
 	  listNotices,
 	  readAdminTokens,
-	  searchOltClients,
 	  setNoticeActive,
 	  updateBugReport,
 	  updateContractRequest,
@@ -129,9 +137,11 @@ const ADMIN_SECTIONS = [
   { key: "bugs", path: "/admin/bugs", label: "Bugs relatados", icon: Bug },
   { key: "curriculos", path: "/admin/curriculos", label: "Currículos", icon: Briefcase },
   { key: "chamados", path: "/admin/chamados", label: "Chamados", icon: Headset },
+  { key: "avaliacoes", path: "/admin/avaliacoes", label: "Avaliações", icon: Star },
+  { key: "localizacoes", path: "/admin/localizacoes", label: "Localizações", icon: MapPin },
+  { key: "errosapp", path: "/admin/erros-app", label: "Erros do app", icon: Smartphone },
   { key: "central", path: "/admin/central", label: "Central", icon: BarChart3 },
   { key: "clients", path: "/admin/clientes", label: "Clientes", icon: Users },
-  { key: "oltcloud", path: "/admin/rede", label: "Rede (OLT)", icon: Router },
   { key: "activity", path: "/admin/historico", label: "Histórico", icon: Activity }
 ];
 
@@ -220,8 +230,8 @@ const EVENT_LABELS = {
 
 /** Espelho so-de-leitura do mapa real (server/src/auth/adminPermissions.ts) -- so pra esconder/desabilitar botao na UI; o backend sempre revalida de verdade. */
 const ROLE_PERMISSIONS = {
-  admin: ["avisos.read", "avisos.create", "avisos.update", "avisos.delete", "avisos.publish", "contratacoes.read", "contratacoes.update", "usuarios.manage", "ranking.read", "marketing.manage"],
-  editor: ["avisos.read", "avisos.create", "avisos.update", "avisos.publish", "contratacoes.read", "contratacoes.update", "ranking.read"],
+  admin: ["avisos.read", "avisos.create", "avisos.update", "avisos.delete", "avisos.publish", "contratacoes.read", "contratacoes.update", "usuarios.manage", "ranking.read", "marketing.manage", "avaliacoes.delete", "localizacoes.review"],
+  editor: ["avisos.read", "avisos.create", "avisos.update", "avisos.publish", "contratacoes.read", "contratacoes.update", "ranking.read", "localizacoes.review"],
   viewer: ["avisos.read"],
   vendedor: ["contratacoes.read", "contratacoes.update"]
 };
@@ -234,6 +244,7 @@ function sectionsFor(admin) {
   return ADMIN_SECTIONS.filter((section) => {
     if (section.key === "contratacoes") return can(admin, "contratacoes.read");
     if (section.key === "vendedores") return can(admin, "ranking.read");
+    if (section.key === "localizacoes") return can(admin, "localizacoes.review");
     return true;
   });
 }
@@ -285,9 +296,11 @@ function pageTitle(pageKey) {
 	    contratacoes: "Contratações",
 	    vendedores: "Vendedores",
 	    chamados: "Chamados",
+	    avaliacoes: "Avaliações do atendimento",
+	    localizacoes: "Localização da casa",
+	    errosapp: "Erros do app",
 	    central: "Central do Assinante",
     clients: "Clientes",
-    oltcloud: "Rede (OLT)",
     activity: "Histórico de Atividades"
   };
   return labels[pageKey] || "Admin AcessaNet";
@@ -298,7 +311,6 @@ function getPageKey(pathname) {
   if (pathname === "/admin" || pathname === "/admin/") return "overview";
 	  if (pathname === "/admin/central") return "central";
 	  if (pathname === "/admin/clientes") return "clients";
-	  if (pathname === "/admin/rede") return "oltcloud";
 	  if (pathname === "/admin/historico") return "activity";
 	  if (pathname === "/admin/bugs") return "bugs";
 	  if (pathname === "/admin/curriculos") return "curriculos";
@@ -306,6 +318,9 @@ function getPageKey(pathname) {
 	  if (pathname === "/admin/contratacoes" || pathname === "/admin/leads") return "contratacoes";
 	  if (pathname === "/admin/vendedores") return "vendedores";
 	  if (pathname === "/admin/chamados") return "chamados";
+	  if (pathname === "/admin/avaliacoes") return "avaliacoes";
+	  if (pathname === "/admin/localizacoes") return "localizacoes";
+	  if (pathname === "/admin/erros-app") return "errosapp";
 	  if (pathname === "/admin/avisos") return "notices";
 	  if (pathname === "/admin/marketing") return "marketing";
   if (pathname === "/admin/avisos/novo") return "new";
@@ -500,10 +515,14 @@ export default function AdminArea() {
 	            <JobApplicationsPage onChanged={refreshJobSummary} />
 	          ) : pageKey === "chamados" ? (
 	            <ChamadosPage />
+	          ) : pageKey === "avaliacoes" ? (
+	            <RatingsPage />
+	          ) : pageKey === "localizacoes" ? (
+	            <LocationsPage />
+	          ) : pageKey === "errosapp" ? (
+	            <AppCrashesPage />
 	          ) : pageKey === "clients" ? (
             <ClientsPage />
-          ) : pageKey === "oltcloud" ? (
-            <OltClientsPage />
           ) : pageKey === "activity" ? (
             <ActivityHistoryPage />
           ) : (
@@ -1794,6 +1813,7 @@ function ContractRequestDetailModal({ requestId, onClose, onUpdated }) {
   );
 
   const request = state.request;
+  const cancelingNow = status === "cancelado" && request?.status !== "cancelado";
 
   async function handleSave(event) {
     event.preventDefault();
@@ -1804,6 +1824,10 @@ function ContractRequestDetailModal({ requestId, onClose, onUpdated }) {
     if (note.trim()) input.note = note.trim();
     if (Object.keys(input).length === 0) {
       setError("Nenhuma alteração para salvar.");
+      return;
+    }
+    if (input.status === "cancelado" && (input.note || "").length < 5) {
+      setError("Informe o motivo do cancelamento (mínimo de 5 caracteres).");
       return;
     }
     setSaving(true);
@@ -1889,13 +1913,14 @@ function ContractRequestDetailModal({ requestId, onClose, onUpdated }) {
                 </select>
               </label>
               <label className="admin-field">
-                <span>Nova nota interna</span>
+                <span>{cancelingNow ? "Motivo do cancelamento (obrigatório)" : "Nova nota interna"}</span>
                 <textarea
                   value={note}
                   onChange={(event) => setNote(event.target.value)}
                   rows={3}
                   maxLength={2000}
-                  placeholder="Ex.: viabilidade confirmada, instalação agendada para sexta."
+                  required={cancelingNow}
+                  placeholder={cancelingNow ? "Ex.: cliente desistiu por preço, achou outro provedor." : "Ex.: viabilidade confirmada, instalação agendada para sexta."}
                 />
               </label>
               <div className="admin-dialog-actions">
@@ -1940,16 +1965,11 @@ function formatFileSize(bytes) {
   return `${Math.max(1, Math.round(value / 1024))} KB`;
 }
 
-async function saveJobApplicationFile(application) {
-  const blob = await downloadJobApplicationFile(application.id);
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = application.fileName || `curriculo-${application.id}`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+const JobApplicationViewer = lazy(() => import("./JobApplicationViewer.jsx"));
+
+/** Exibimos PDF (pdf.js) e DOCX (docx-preview) na página; o DOC antigo (binário) não tem como. */
+function isViewableFileName(fileName) {
+  return /\.(pdf|docx)$/i.test(String(fileName || ""));
 }
 
 function JobApplicationsPage({ onChanged }) {
@@ -2066,25 +2086,14 @@ function JobApplicationDetailModal({ application, onClose, onUpdated }) {
   const [status, setStatus] = useState(application.status || "novo");
   const [adminNotes, setAdminNotes] = useState(application.adminNotes || "");
   const [saving, setSaving] = useState(false);
-  const [downloading, setDownloading] = useState(false);
+  const [viewing, setViewing] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    setViewing(false);
     setStatus(application.status || "novo");
     setAdminNotes(application.adminNotes || "");
   }, [application]);
-
-  async function handleDownload() {
-    setDownloading(true);
-    setError("");
-    try {
-      await saveJobApplicationFile(application);
-    } catch (caughtError) {
-      setError(caughtError instanceof AdminApiError ? caughtError.message : "Não foi possível baixar o currículo.");
-    } finally {
-      setDownloading(false);
-    }
-  }
 
   async function handleSave(event) {
     event.preventDefault();
@@ -2113,10 +2122,19 @@ function JobApplicationDetailModal({ application, onClose, onUpdated }) {
         </dl>
 
         <div className="admin-dialog-actions">
-          <button type="button" className="admin-btn admin-btn-primary" onClick={handleDownload} disabled={downloading}>
-            <Download size={16} /> {downloading ? "Baixando…" : "Baixar currículo"}
-          </button>
+          {isViewableFileName(application.fileName) ? (
+            <button type="button" className="admin-btn admin-btn-primary" onClick={() => setViewing((current) => !current)}>
+              <Eye size={16} /> {viewing ? "Ocultar currículo" : "Ver currículo"}
+            </button>
+          ) : (
+            <span className="admin-cv-viewer-note">Este currículo está em formato DOC antigo ({application.fileName}) e não pode ser exibido na página; só PDF e DOCX.</span>
+          )}
         </div>
+        {viewing ? (
+          <Suspense fallback={<p className="admin-cv-viewer-note">Carregando visualizador…</p>}>
+            <JobApplicationViewer applicationId={application.id} fileName={application.fileName} />
+          </Suspense>
+        ) : null}
 
         <label className="admin-field">
           <span>Sobre o candidato</span>
@@ -2272,130 +2290,6 @@ const CONNECTION_STATUS_LABELS = {
 function ConnectionStatusPill({ status }) {
   const tone = (status || "UNKNOWN").toLowerCase();
   return <span className={`admin-status-pill tone-conexao-${tone}`}>{CONNECTION_STATUS_LABELS[status] || "Sem dados"}</span>;
-}
-
-/**
- * Busca clientes direto na OLT Cloud (nome, documento, pppoe ou contrato) --
- * consulta ao vivo num sistema de terceiros, nunca uma tabela local, por
- * isso dispara so no submit (nao a cada tecla, como ClientsPage faz com a
- * analytics local). Documento sempre mascarado pelo backend antes de chegar
- * aqui (ver adminOltCloudRoutes.ts); nunca existe pppoe_password na resposta.
- */
-function OltClientsPage() {
-  const [documentValue, setDocumentValue] = useState("");
-  const [name, setName] = useState("");
-  const [pppoe, setPppoe] = useState("");
-  const [contractId, setContractId] = useState("");
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [searched, setSearched] = useState(false);
-
-  async function handleSearch(event) {
-    event.preventDefault();
-
-    if (!documentValue.trim() && !name.trim() && !pppoe.trim() && !contractId.trim()) {
-      setError("Informe ao menos um filtro: documento, nome, PPPoE ou contrato.");
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-    setSearched(true);
-    try {
-      const result = await searchOltClients({
-        document: documentValue.trim() || undefined,
-        name: name.trim() || undefined,
-        pppoe: pppoe.trim() || undefined,
-        contractId: contractId.trim() || undefined
-      });
-      setData(result);
-    } catch (caughtError) {
-      setData(null);
-      setError(caughtError instanceof AdminApiError ? caughtError.message : "Não foi possível buscar na OLT Cloud agora.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div className="admin-page-stack">
-      <div className="admin-page-head">
-        <h2>Rede (OLT)</h2>
-      </div>
-      <p className="admin-muted">Busca ao vivo direto na OLT Cloud -- não é a base de clientes da Central.</p>
-
-      <form onSubmit={handleSearch}>
-        <FilterBar>
-          <label className="admin-field admin-field-inline">
-            <span>Documento</span>
-            <input value={documentValue} onChange={(event) => setDocumentValue(event.target.value)} placeholder="CPF ou CNPJ" />
-          </label>
-          <label className="admin-field admin-field-inline">
-            <span>Nome</span>
-            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome do cliente" />
-          </label>
-          <label className="admin-field admin-field-inline">
-            <span>PPPoE</span>
-            <input value={pppoe} onChange={(event) => setPppoe(event.target.value)} placeholder="usuario@provedor" />
-          </label>
-          <label className="admin-field admin-field-inline">
-            <span>Contrato</span>
-            <input value={contractId} onChange={(event) => setContractId(event.target.value)} />
-          </label>
-          <button type="submit" className="admin-btn admin-btn-primary" disabled={loading}>
-            {loading ? <RefreshCw size={16} className="cliente-spin" /> : <Search size={16} />}
-            Buscar
-          </button>
-        </FilterBar>
-      </form>
-
-      <InlineState loading={loading} error={error} />
-
-      {!loading && !error && searched ? (
-        <>
-          {data?.truncated ? (
-            <p className="admin-inline-notice tone-warning">
-              Mostrando {data.clients.length} de {formatNumber(data.total)} resultados -- refine a busca para ver todos.
-            </p>
-          ) : null}
-          <div className="admin-table-wrap">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>Cliente</th>
-                  <th>Documento</th>
-                  <th>PPPoE</th>
-                  <th>Conexão</th>
-                  <th>Status</th>
-                  <th>Plano</th>
-                  <th>Contrato</th>
-                  <th>Cidade/UF</th>
-                  <th>Contato</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(data?.clients || []).map((client) => (
-                  <tr key={`${client.id}-${client.externalContractId}`} title={client.addressLine || ""}>
-                    <td>{client.name || "—"}</td>
-                    <td>{client.maskedDocument || "—"}</td>
-                    <td>{client.pppoe || "—"}</td>
-                    <td><ConnectionStatusPill status={client.connectionStatus} /></td>
-                    <td>{client.status || "—"}</td>
-                    <td>{client.plan || "—"}</td>
-                    <td>{client.externalContractId || "—"}</td>
-                    <td>{client.city ? `${client.city}/${client.state}` : "—"}</td>
-                    <td>{client.contact || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {data && data.clients.length === 0 ? <p className="admin-muted">Nenhum cliente encontrado.</p> : null}
-          </div>
-        </>
-      ) : null}
-    </div>
-  );
 }
 
 function ActivityHistoryPage() {
@@ -2812,6 +2706,769 @@ function ChamadosPage() {
       ) : null}
 
       {selectedProtocol ? <ChamadoDetailDialog protocol={selectedProtocol} onClose={() => setSelectedProtocol(null)} /> : null}
+    </div>
+  );
+}
+
+const LOCATION_STATUS_OPTIONS = [
+  { value: "pending", label: "Aguardando envio ao SGP" },
+  { value: "approved", label: "Enviadas ao chamado" },
+  { value: "rejected", label: "Recusadas" },
+  { value: "", label: "Todas" }
+];
+const LOCATION_STATUS_LABELS = { pending: "Aguardando", approved: "Enviada ao chamado", rejected: "Recusada" };
+
+/** Localização da casa enviada pelo cliente para a visita: a equipe confere e, ao aprovar, o link do mapa vai para a OS do SGP. */
+function LocationsPage() {
+  const [status, setStatus] = useState("pending");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      setData(await listLocations({ status }));
+    } catch (caughtError) {
+      setError(caughtError instanceof AdminApiError ? caughtError.message : "Não foi possível carregar as localizações.");
+    } finally {
+      setLoading(false);
+    }
+  }, [status]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function handleApprove(item) {
+    if (!window.confirm(`Enviar a localização do chamado ${item.protocol} ao SGP? O link do mapa será gravado no chamado para o técnico.`)) return;
+    setBusyId(item.id);
+    try {
+      await approveLocation(item.id);
+      await load();
+    } catch (caughtError) {
+      window.alert(caughtError instanceof AdminApiError ? caughtError.message : "Não foi possível enviar ao chamado agora.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function handleReject(item) {
+    const note = window.prompt("Motivo da recusa (o cliente vê esta mensagem; deixe em branco para não informar):", "");
+    if (note === null) return;
+    setBusyId(item.id);
+    try {
+      await rejectLocation(item.id, note.trim());
+      await load();
+    } catch (caughtError) {
+      window.alert(caughtError instanceof AdminApiError ? caughtError.message : "Não foi possível recusar agora.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  return (
+    <div className="admin-page-stack">
+      <div className="admin-page-head">
+        <h2>Localização da casa</h2>
+        <p className="admin-muted">
+          Pontos enviados pelos clientes. O link do mapa vai sozinho para o chamado no SGP (anotação da OS e comentário; sem OS, um anexo na
+          aba Anexos). “Aguardando” = o SGP não aceitou ainda: use <strong>Enviar ao chamado</strong> para tentar de novo. Coordenada exata
+          é dado pessoal: use só para a visita.
+        </p>
+        <div className="admin-page-head-actions">
+          <button type="button" className="admin-btn admin-btn-soft" onClick={() => void load()}>
+            <RefreshCw size={15} />
+            Atualizar
+          </button>
+        </div>
+      </div>
+
+      <FilterBar>
+        <label className="admin-field admin-field-inline">
+          <span>Situação</span>
+          <select value={status} onChange={(event) => setStatus(event.target.value)}>
+            {LOCATION_STATUS_OPTIONS.map((item) => (
+              <option value={item.value} key={item.value || "all"}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </FilterBar>
+
+      <InlineState loading={loading && !data} error={error} />
+
+      {data && !loading && data.items.length === 0 ? <p className="admin-muted">Nenhuma localização nesta situação.</p> : null}
+
+      {data && data.items.length > 0 ? (
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Enviada em</th>
+                <th>Cliente</th>
+                <th>Contrato</th>
+                <th>Chamado</th>
+                <th>Precisão</th>
+                <th>Origem</th>
+                <th>Mapa</th>
+                <th>Situação</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.items.map((item) => (
+                <tr key={item.id}>
+                  <td>{formatDateTime(item.createdAt)}</td>
+                  <td>{item.customerName || "—"}</td>
+                  <td>{item.contractId}</td>
+                  <td>{item.protocol}</td>
+                  <td>{item.accuracyMeters === null ? "—" : `${Math.round(item.accuracyMeters)} m`}</td>
+                  <td>{item.source === "app" ? "App" : "Site"}</td>
+                  <td>
+                    <a href={item.mapUrl} target="_blank" rel="noopener noreferrer">
+                      Abrir no mapa
+                    </a>
+                  </td>
+                  <td>
+                    {LOCATION_STATUS_LABELS[item.status] || item.status}
+                    {item.status === "rejected" && item.reviewNote ? <small className="admin-muted"> — {item.reviewNote}</small> : null}
+                  </td>
+                  <td>
+                    {item.status === "pending" ? (
+                      <div className="admin-rating-actions">
+                        <button type="button" className="admin-btn admin-btn-primary" disabled={Boolean(busyId)} onClick={() => void handleApprove(item)}>
+                          {busyId === item.id ? "Aguarde…" : "Enviar ao chamado"}
+                        </button>
+                        <button type="button" className="admin-btn admin-btn-soft" disabled={Boolean(busyId)} onClick={() => void handleReject(item)}>
+                          Recusar
+                        </button>
+                      </div>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const RATING_STAR_OPTIONS = [
+  { value: "", label: "Todas as notas" },
+  { value: "1", label: "1 estrela" },
+  { value: "2", label: "2 estrelas" },
+  { value: "3", label: "3 estrelas" },
+  { value: "4", label: "4 estrelas" },
+  { value: "5", label: "5 estrelas" }
+];
+
+function formatRatingAverage(value) {
+  return value === null || value === undefined ? "—" : Number(value).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+}
+
+function RatingStars({ value }) {
+  return (
+    <span className="admin-rating-stars" role="img" aria-label={`${value} de 5`}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <Star key={n} size={14} className={n <= value ? "is-on" : ""} aria-hidden="true" />
+      ))}
+    </span>
+  );
+}
+
+function RatingsPage() {
+  const [period, setPeriod] = useState("30d");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [rating, setRating] = useState("");
+  const [technician, setTechnician] = useState("");
+  const [withComment, setWithComment] = useState(false);
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState(null);
+  const [selectedProtocol, setSelectedProtocol] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [deletingKey, setDeletingKey] = useState("");
+
+  const params = useMemo(
+    () => ({
+      period,
+      ...(period === "custom" ? { from, to } : {}),
+      page,
+      limit: 25,
+      rating,
+      technician,
+      withComment: withComment ? "1" : ""
+    }),
+    [from, page, period, rating, technician, to, withComment]
+  );
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      setData(await listRatings(params));
+    } catch (caughtError) {
+      setError(caughtError instanceof AdminApiError ? caughtError.message : "Não foi possível carregar as avaliações.");
+    } finally {
+      setLoading(false);
+    }
+  }, [params]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const summary = data?.summary;
+  const distributionMax = Math.max(...Object.values(summary?.distribution || { 1: 0 }), 1);
+  const technicians = summary?.byTechnician || [];
+
+  function changeFilter(apply) {
+    setPage(1);
+    apply();
+  }
+
+  async function handleDelete(item) {
+    if (!window.confirm(`Excluir a avaliação do chamado ${item.protocol}? Isso não tem volta.`)) return;
+    setDeletingKey(item.id);
+    try {
+      await deleteRating(item.id);
+      await load();
+    } catch (caught) {
+      window.alert(caught instanceof AdminApiError ? caught.message : "Não foi possível excluir agora.");
+    } finally {
+      setDeletingKey("");
+    }
+  }
+
+  async function handleDeleteContract(item) {
+    if (
+      !window.confirm(
+        `Excluir TODAS as avaliações do contrato ${item.contractId} (${item.customerName || "sem nome"}), inclusive as ainda não respondidas? Isso não tem volta.`
+      )
+    )
+      return;
+    setDeletingKey(`contrato:${item.contractId}`);
+    try {
+      await deleteContractRatings(item.contractId);
+      await load();
+    } catch (caught) {
+      window.alert(caught instanceof AdminApiError ? caught.message : "Não foi possível excluir agora.");
+    } finally {
+      setDeletingKey("");
+    }
+  }
+
+  return (
+    <div className="admin-page-stack">
+      <div className="admin-page-head">
+        <h2>Avaliações do atendimento</h2>
+        <div className="admin-page-head-actions">
+          <button type="button" className="admin-btn admin-btn-soft" onClick={() => void load()}>
+            <RefreshCw size={15} />
+            Atualizar
+          </button>
+        </div>
+      </div>
+
+      <PeriodControlExtended
+        period={period}
+        setPeriod={(value) => changeFilter(() => setPeriod(value))}
+        from={from}
+        setFrom={setFrom}
+        to={to}
+        setTo={setTo}
+      />
+
+      <InlineState loading={loading && !data} error={error} />
+
+      {data?.truncated ? (
+        <div className="admin-inline-notice tone-warning">
+          <AlertTriangle size={16} />
+          <span>O período tem muitas avaliações; estreite o período para ver o total exato.</span>
+        </div>
+      ) : null}
+
+      {summary ? (
+        <>
+          <div className="admin-metric-grid">
+            <div className="admin-metric">
+              <span>Nota média</span>
+              <strong>{formatRatingAverage(summary.average)}</strong>
+            </div>
+            <div className="admin-metric">
+              <span>Respondidas</span>
+              <strong>{formatNumber(summary.answered)}</strong>
+            </div>
+            <div className="admin-metric">
+              <span>Pedidos enviados</span>
+              <strong>{formatNumber(summary.requests)}</strong>
+            </div>
+            <div className="admin-metric">
+              <span>Taxa de resposta</span>
+              <strong>{Math.round((summary.responseRate || 0) * 100)}%</strong>
+            </div>
+            <div className="admin-metric">
+              <span>Notas 1 e 2</span>
+              <strong>{formatNumber(summary.low)}</strong>
+            </div>
+          </div>
+
+          <div className="admin-rating-columns">
+            <section className="admin-panel">
+              <h3>Distribuição das notas</h3>
+              <div className="admin-bar-list">
+                {[5, 4, 3, 2, 1].map((n) => (
+                  <div className="admin-bar-row" key={n}>
+                    <span>{n} ★</span>
+                    <div className="admin-bar-track">
+                      <i style={{ width: `${((summary.distribution[n] || 0) / distributionMax) * 100}%` }} />
+                    </div>
+                    <strong>{formatNumber(summary.distribution[n] || 0)}</strong>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="admin-panel">
+              <h3>Por técnico</h3>
+              {technicians.length ? (
+                <div className="admin-table-wrap">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>Técnico</th>
+                        <th>Avaliações</th>
+                        <th>Média</th>
+                        <th>Notas 1 e 2</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {technicians.map((item) => (
+                        <tr
+                          key={item.technician}
+                          className={technician === item.technician ? "is-selected" : ""}
+                          onClick={() => changeFilter(() => setTechnician(technician === item.technician ? "" : item.technician))}
+                        >
+                          <td>{item.technician}</td>
+                          <td>{formatNumber(item.answered)}</td>
+                          <td>
+                            <strong>{formatRatingAverage(item.average)}</strong>
+                          </td>
+                          <td>{formatNumber(item.low)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="admin-muted">Nenhuma avaliação respondida no período.</p>
+              )}
+              <p className="admin-muted">Clique em um técnico para filtrar a lista abaixo.</p>
+            </section>
+          </div>
+        </>
+      ) : null}
+
+      <FilterBar>
+        <label className="admin-field admin-field-inline">
+          <span>Nota</span>
+          <select value={rating} onChange={(event) => changeFilter(() => setRating(event.target.value))}>
+            {RATING_STAR_OPTIONS.map((item) => (
+              <option value={item.value} key={item.value || "all"}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="admin-field admin-field-inline">
+          <span>Técnico</span>
+          <select value={technician} onChange={(event) => changeFilter(() => setTechnician(event.target.value))}>
+            <option value="">Todos</option>
+            {technician && !technicians.some((item) => item.technician === technician) ? <option value={technician}>{technician}</option> : null}
+            {technicians.map((item) => (
+              <option value={item.technician} key={item.technician}>
+                {item.technician}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="admin-field admin-field-inline">
+          <span>Comentário</span>
+          <select value={withComment ? "1" : ""} onChange={(event) => changeFilter(() => setWithComment(event.target.value === "1"))}>
+            <option value="">Todos</option>
+            <option value="1">Só com comentário</option>
+          </select>
+        </label>
+      </FilterBar>
+
+      {data && !loading && data.items.length === 0 ? (
+        <p className="admin-muted">Nenhuma avaliação encontrada com os filtros selecionados.</p>
+      ) : null}
+
+      {data && data.items.length > 0 ? (
+        <>
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Respondida em</th>
+                  <th>Cliente</th>
+                  <th>Nota</th>
+                  <th>Técnico</th>
+                  <th>Protocolo</th>
+                  <th>Motivo</th>
+                  <th>Comentário</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((item) => (
+                  <tr key={item.id} onClick={() => setSelectedProtocol(item.protocol)}>
+                    <td>{formatDateTime(item.answeredAt)}</td>
+                    <td>{item.customerName || "—"}</td>
+                    <td>
+                      <RatingStars value={item.rating} />
+                    </td>
+                    <td>{item.technician}</td>
+                    <td>{item.protocol}</td>
+                    <td>{item.ticketTitle}</td>
+                    <td className="admin-rating-comment">{item.comment || "—"}</td>
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <div className="admin-rating-actions">
+                        <button
+                          type="button"
+                          className="admin-btn admin-btn-soft"
+                          disabled={Boolean(deletingKey)}
+                          onClick={() => void handleDelete(item)}
+                        >
+                          {deletingKey === item.id ? "Excluindo…" : "Excluir"}
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-btn admin-btn-soft"
+                          title={`Exclui todas as avaliações do contrato ${item.contractId}`}
+                          disabled={Boolean(deletingKey)}
+                          onClick={() => void handleDeleteContract(item)}
+                        >
+                          {deletingKey === `contrato:${item.contractId}` ? "Excluindo…" : "Excluir do contrato"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <TablePager data={data} page={page} setPage={setPage} />
+        </>
+      ) : null}
+
+      {selectedProtocol ? <ChamadoDetailDialog protocol={selectedProtocol} onClose={() => setSelectedProtocol(null)} /> : null}
+    </div>
+  );
+}
+
+const APP_CRASH_STATUS_OPTIONS = [
+  { value: "novo", label: "Novo" },
+  { value: "em_analise", label: "Em análise" },
+  { value: "corrigido", label: "Corrigido" },
+  { value: "ignorado", label: "Ignorado" }
+];
+const APP_CRASH_KIND_LABELS = { js: "Tela (JavaScript)", native: "Nativo (Android)", anr: "App travado (ANR)" };
+
+function AppCrashStatusPill({ status }) {
+  const label = APP_CRASH_STATUS_OPTIONS.find((item) => item.value === status)?.label || status;
+  return <span className={`admin-status-pill tone-${status || "novo"}`}>{label}</span>;
+}
+
+function AppCrashesPage() {
+  const [period, setPeriod] = useState("7d");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [status, setStatus] = useState("");
+  const [kind, setKind] = useState("");
+  const [data, setData] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const params = useMemo(() => ({ period, ...(period === "custom" ? { from, to } : {}), status, kind }), [from, kind, period, status, to]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      setData(await listAppCrashes(params));
+    } catch (caughtError) {
+      setError(caughtError instanceof AdminApiError ? caughtError.message : "Não foi possível carregar os erros do app.");
+    } finally {
+      setLoading(false);
+    }
+  }, [params]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const summary = data?.summary;
+
+  return (
+    <div className="admin-page-stack">
+      <div className="admin-page-head">
+        <h2>Erros do app</h2>
+        <div className="admin-page-head-actions">
+          <button type="button" className="admin-btn admin-btn-soft" onClick={() => void load()}>
+            <RefreshCw size={15} />
+            Atualizar
+          </button>
+        </div>
+      </div>
+
+      {summary ? (
+        <div className="admin-metric-grid">
+          <div className="admin-metric">
+            <span>Erros diferentes</span>
+            <strong>{formatNumber(summary.errors)}</strong>
+          </div>
+          <div className="admin-metric">
+            <span>Ocorrências</span>
+            <strong>{formatNumber(summary.occurrences)}</strong>
+          </div>
+          <div className="admin-metric">
+            <span>Em aberto</span>
+            <strong>{formatNumber(summary.open)}</strong>
+          </div>
+          <div className="admin-metric">
+            <span>Corrigidos</span>
+            <strong>{formatNumber(summary.byStatus.corrigido)}</strong>
+          </div>
+        </div>
+      ) : null}
+
+      {data?.truncated ? (
+        <div className="admin-inline-notice tone-warning">
+          <AlertTriangle size={16} />
+          <span>O período tem muitas ocorrências; estreite o período para ver os números exatos.</span>
+        </div>
+      ) : null}
+
+      <PeriodControlExtended period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+
+      <FilterBar>
+        <label className="admin-field admin-field-inline">
+          <span>Status</span>
+          <select value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="">Todos</option>
+            {APP_CRASH_STATUS_OPTIONS.map((item) => (
+              <option value={item.value} key={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="admin-field admin-field-inline">
+          <span>Tipo</span>
+          <select value={kind} onChange={(event) => setKind(event.target.value)}>
+            <option value="">Todos</option>
+            {Object.entries(APP_CRASH_KIND_LABELS).map(([value, label]) => (
+              <option value={value} key={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </FilterBar>
+
+      <InlineState loading={loading && !data} error={error} />
+
+      {data && !loading && data.items.length === 0 ? <p className="admin-muted">Nenhum erro registrado com os filtros selecionados. 🎉</p> : null}
+
+      {data && data.items.length > 0 ? (
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Erro</th>
+                <th>Tipo</th>
+                <th>Ocorrências</th>
+                <th>Aparelhos</th>
+                <th>Versões</th>
+                <th>Última vez</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.items.map((item) => (
+                <tr key={item.signature} onClick={() => setSelected(item.signature)}>
+                  <td className="admin-crash-title">{item.title}</td>
+                  <td>{APP_CRASH_KIND_LABELS[item.kind] || item.kind}</td>
+                  <td>
+                    <strong>{formatNumber(item.count)}</strong>
+                  </td>
+                  <td>{formatNumber(item.devices)}</td>
+                  <td>{item.versions.join(", ")}</td>
+                  <td>{formatDateTime(item.lastSeen)}</td>
+                  <td>
+                    <AppCrashStatusPill status={item.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      {selected ? <AppCrashDialog signature={selected} onClose={() => setSelected(null)} onSaved={() => void load()} /> : null}
+    </div>
+  );
+}
+
+function AppCrashDialog({ signature, onClose, onSaved }) {
+  const [state, setState] = useState({ loading: true, detail: null, error: "" });
+  const [status, setStatus] = useState("novo");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    getAppCrash(signature)
+      .then((detail) => {
+        if (!active) return;
+        setState({ loading: false, detail, error: "" });
+        setStatus(detail.group.status);
+        setNotes(detail.adminNotes || "");
+      })
+      .catch((caughtError) => {
+        if (active) {
+          setState({ loading: false, detail: null, error: caughtError instanceof AdminApiError ? caughtError.message : "Não foi possível carregar o erro." });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [signature]);
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveError("");
+    try {
+      await updateAppCrash(signature, { status, adminNotes: notes });
+      onSaved();
+      onClose();
+    } catch (caughtError) {
+      setSaveError(caughtError instanceof AdminApiError ? caughtError.message : "Não foi possível salvar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const detail = state.detail;
+
+  return (
+    <div className="admin-dialog-backdrop" role="presentation" onClick={onClose}>
+      <div className="admin-dialog admin-dialog-wide" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+        <h3>Erro do app</h3>
+        {state.error ? <p className="admin-muted">{state.error}</p> : null}
+        {state.loading ? <p className="admin-muted">Carregando…</p> : null}
+
+        {detail ? (
+          <>
+            <p className="admin-crash-title">{detail.group.title}</p>
+            <dl className="admin-detail-grid">
+              <div>
+                <dt>Tipo</dt>
+                <dd>{APP_CRASH_KIND_LABELS[detail.group.kind] || detail.group.kind}</dd>
+              </div>
+              <div>
+                <dt>Ocorrências</dt>
+                <dd>{formatNumber(detail.group.count)}</dd>
+              </div>
+              <div>
+                <dt>Aparelhos</dt>
+                <dd>{formatNumber(detail.group.devices)}</dd>
+              </div>
+              <div>
+                <dt>Versões</dt>
+                <dd>{detail.group.versions.join(", ")}</dd>
+              </div>
+              <div>
+                <dt>Primeira vez</dt>
+                <dd>{formatDateTime(detail.group.firstSeen)}</dd>
+              </div>
+              <div>
+                <dt>Última vez</dt>
+                <dd>{formatDateTime(detail.group.lastSeen)}</dd>
+              </div>
+            </dl>
+
+            <h4>Pilha do erro (mais recente)</h4>
+            <pre className="admin-crash-stack">{detail.stack || "Sem pilha."}</pre>
+
+            <h4>Últimas ocorrências</h4>
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Quando</th>
+                    <th>Versão</th>
+                    <th>Aparelho / navegador</th>
+                    <th>Sistema</th>
+                    <th>ID anônimo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.recent.map((item) => (
+                    <tr key={item.id}>
+                      <td>{formatDateTime(item.createdAt)}</td>
+                      <td>{item.appVersion}</td>
+                      <td>{item.deviceModel}</td>
+                      <td>{item.androidVersion}</td>
+                      <td>{item.device}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <label className="admin-field">
+              <span>Status</span>
+              <select value={status} onChange={(event) => setStatus(event.target.value)}>
+                {APP_CRASH_STATUS_OPTIONS.map((item) => (
+                  <option value={item.value} key={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="admin-field">
+              <span>Anotações</span>
+              <textarea rows={3} maxLength={3000} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Ex.: corrigido na 1.0.12" />
+            </label>
+            {saveError ? <p className="admin-muted">{saveError}</p> : null}
+          </>
+        ) : null}
+
+        <div className="admin-dialog-actions">
+          <button type="button" className="admin-btn admin-btn-soft" onClick={onClose}>
+            Fechar
+          </button>
+          {detail ? (
+            <button type="button" className="admin-btn admin-btn-primary" disabled={saving} onClick={() => void handleSave()}>
+              {saving ? "Salvando…" : "Salvar"}
+            </button>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }

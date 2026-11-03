@@ -2,8 +2,7 @@ import { AppError } from "../errors.js";
 import type { InMemoryStore, TicketRecord } from "../repositories/inMemoryStore.js";
 import type { ContractSummary } from "../types.js";
 import type { SgpUraClient } from "../integrations/sgp/sgpClient.js";
-import { mapSgpContract, pickString } from "../integrations/sgp/sgpMapper.js";
-import { sha256 } from "./hash.js";
+import { hmacCustomerId, legacyCustomerId, mapSgpContract, pickString } from "../integrations/sgp/sgpMapper.js";
 import { getDocumentType, normalizeDocument } from "../auth/cpf.js";
 
 /** Logger minimo (nao importa tipos do Fastify aqui pra nao acoplar essa classe ao framework). */
@@ -64,7 +63,9 @@ export class OwnershipService {
       return cached;
     }
 
-    if (!cached && this.sgpClient && isLikelySgpContractId(contractId)) {
+    // Durante a migracao do id (HMAC ligado) o cache pode ter o contrato sob o OUTRO id do mesmo cliente
+    // (outro dispositivo ja relogou): a reverificacao no SGP e a fonte da verdade, entao tenta tambem nesse caso.
+    if ((!cached || this.sgpClient?.customerIdSecret) && this.sgpClient && isLikelySgpContractId(contractId)) {
       const reverified = await this.reverifyOwnership(customerId, contractId);
       if (reverified) {
         return reverified;
@@ -106,8 +107,10 @@ export class OwnershipService {
         return null;
       }
 
-      const derivedCustomerId = `customer_sgp_${sha256(document).slice(0, 16)}`;
-      if (derivedCustomerId !== customerId) {
+      const legacyMatch = legacyCustomerId(document) === customerId;
+      const secret = this.sgpClient?.customerIdSecret;
+      const hmacMatch = Boolean(secret) && hmacCustomerId(document, secret as string) === customerId;
+      if (!legacyMatch && !hmacMatch) {
         return null;
       }
 

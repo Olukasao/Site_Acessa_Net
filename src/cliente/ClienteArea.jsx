@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { AppExtrasContext, LoginBackdropContext } from "./homeHeroSlot";
 import PageMeta from "./PageMeta";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -48,6 +49,8 @@ import {
   WifiOff,
   Wrench,
   Zap,
+  Paperclip,
+  FileText,
   X
 } from "lucide-react";
 import logo from "../assets/logo-acessanet-3d.png";
@@ -75,12 +78,17 @@ import {
   readTokens,
   recordCentralActivity,
   recordNoticeView,
+  requestFirstAccessCode,
   resetPasswordWithToken,
   saveSelectedContractId,
   setupLocalPassword,
-  verifyResetCode
+  verifyResetCode,
+  consumeSessionExpiredNotice
 } from "./clienteApi";
 import NoticeBanner from "./central/NoticeBanner";
+import VisitLocationCard from "./central/VisitLocationCard";
+import ToastHost, { showToast } from "./central/Toast";
+import { LocationCaptureField, submitLocation } from "./central/locationCapture";
 import NetworkIncidentBanner from "./central/NetworkIncidentBanner";
 import NoticeCard from "./central/NoticeCard";
 import NoticeModal from "./central/NoticeModal";
@@ -95,6 +103,7 @@ import {
 import PlanUpgradeShowcase from "./central/PlanUpgradeShowcase";
 import PlanUpgradeModal from "./central/PlanUpgradeModal";
 import PaymentPromiseModal from "./central/PaymentPromiseModal";
+import RatingPrompt from "./central/RatingPrompt";
 import {
   PLAN_UPGRADE_BENEFITS,
   RECOMMENDED_PLAN,
@@ -105,7 +114,7 @@ import {
 } from "./planUpgradeCatalog";
 import { PLAN_UPGRADE_EVENTS, trackPlanUpgradeEvent } from "./planUpgradeAnalytics";
 import { formatCurrency } from "./format";
-import { company } from "../data/site";
+import { company, whatsappLink } from "../data/site";
 import "./styles/clienteArea.css";
 import "./styles/clienteHome.css";
 import "./styles/clienteAreaSkin.css";
@@ -660,6 +669,66 @@ export default function ClienteArea() {
     }
   }, [authenticated, refreshCustomerData, selectedContractApiId]);
 
+  // O horário da visita e o status do chamado mudam no SGP depois do login, inclusive chamados abertos ou agendados
+  // direto pela equipe (sem o app saber). Por isso a tela confere sozinha, com ou sem chamado ativo:
+  //  - a cada 30 s (só com a tela visível), uma busca silenciosa dos chamados, sem piscar a tela;
+  //  - ao voltar para o app/aba e quando chega uma notificação, uma atualização completa.
+  const refreshTicketsQuiet = useCallback(async () => {
+    const contractId = selectedContractApiIdRef.current;
+    if (!contractId) return;
+    const [list, current] = await Promise.all([
+      settle(clienteRequest("/v1/support/tickets")),
+      settle(clienteRequest(`/v1/contracts/${contractId}/ticket`))
+    ]);
+    if (selectedContractApiIdRef.current !== contractId) return;
+    if (list.ok) setTickets(Array.isArray(list.data) ? list.data : []);
+    if (current.ok) setCurrentTicket(current.data);
+  }, []);
+  useEffect(() => {
+    if (!authenticated || !selectedContractApiId) return undefined;
+    let lastFull = Date.now();
+    const visible = () => document.visibilityState === "visible";
+    const refreshFull = () => {
+      if (!visible()) return;
+      const now = Date.now();
+      if (now - lastFull < 10_000) return;
+      lastFull = now;
+      void refreshCustomerData();
+    };
+    const onVisibility = () => refreshFull();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("acessanet:resume", refreshFull);
+    window.addEventListener("acessanet:push-received", refreshFull);
+    const timer = window.setInterval(() => {
+      if (visible()) void refreshTicketsQuiet();
+    }, 30_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("acessanet:resume", refreshFull);
+      window.removeEventListener("acessanet:push-received", refreshFull);
+      window.clearInterval(timer);
+    };
+  }, [authenticated, refreshCustomerData, refreshTicketsQuiet, selectedContractApiId]);
+
+  // Camada nativa do app (push): avisa que há cliente autenticado e quais contratos ele tem. Sem ouvinte (site), nada acontece.
+  useEffect(() => {
+    if (!authenticated) return;
+    window.dispatchEvent(
+      new CustomEvent("acessanet:authenticated", { detail: { contractIds: contracts.map((contract) => contract.id) } })
+    );
+  }, [authenticated, contracts]);
+
+  // Sessão acabou (refresh recusado em qualquer chamada): volta ao login com aviso, em vez de deixar a tela vazia.
+  const handleLogoutRef = useRef(null);
+  handleLogoutRef.current = handleLogout;
+  useEffect(() => {
+    const onExpired = () => {
+      void handleLogoutRef.current?.();
+    };
+    window.addEventListener("acessanet:session-expired", onExpired);
+    return () => window.removeEventListener("acessanet:session-expired", onExpired);
+  }, []);
+
   useEffect(() => {
     if (authenticated && selectedContractApiId && (pageKey === "faturas" || pageKey === "inicio")) {
       void refreshInvoices();
@@ -714,39 +783,40 @@ export default function ClienteArea() {
   }
 
   async function handleLogout() {
+    const { accessToken } = readTokens();
+    window.dispatchEvent(new CustomEvent("acessanet:logging-out", { detail: { accessToken } }));
     customerDataAbortRef.current?.abort();
     invoicesAbortRef.current?.abort();
     promiseStatusAbortRef.current?.abort();
 
-    try {
-      const { accessToken } = readTokens();
-      if (accessToken) {
-        await logoutCustomer(accessToken);
-      }
-    } catch {
-      // Token cleanup is local and must happen even if the remote session expired.
-    } finally {
-      clearTokens();
-      setCustomer(null);
-      setContracts([]);
-      setSelectedContractId("");
-      setConnection(null);
-      setBilling(null);
-      setInvoiceData(null);
-      setInvoicesError("");
-      setPromiseStatus(null);
-      setTickets([]);
-      setCurrentTicket(null);
-      setCategories([]);
-      setSignatureData(null);
-      setSignatureModalOpen(false);
-      setNotices([]);
-      setDataError("");
-      // Sem isso, login -> logout -> login na mesma aba nunca reabriria o
-      // modal de assinatura pendente, mesmo com pendencia real (o SGP e
-      // sempre a fonte da verdade, nunca o navegador).
-      clearSignatureModalSessionState();
-      navigate("/cliente/login", { replace: true });
+    // Volta ao login NA HORA, sem esperar o servidor. Antes a tela esperava a chamada de logout (com o token já
+    // expirado) terminar antes de limpar tudo, e nesse intervalo as chamadas que falharam deixavam avisos soltos
+    // (dados indisponíveis, "contrato com pendência", erro de fatura) por cima da Central. O encerramento no servidor
+    // segue em segundo plano (best-effort); o descarte local do token é o que importa.
+    clearTokens();
+    setCustomer(null);
+    setContracts([]);
+    setSelectedContractId("");
+    setConnection(null);
+    setBilling(null);
+    setInvoiceData(null);
+    setInvoicesError("");
+    setPromiseStatus(null);
+    setTickets([]);
+    setCurrentTicket(null);
+    setCategories([]);
+    setSignatureData(null);
+    setSignatureModalOpen(false);
+    setNotices([]);
+    setDataError("");
+    // Sem isso, login -> logout -> login na mesma aba nunca reabriria o
+    // modal de assinatura pendente, mesmo com pendencia real (o SGP e
+    // sempre a fonte da verdade, nunca o navegador).
+    clearSignatureModalSessionState();
+    navigate("/cliente/login", { replace: true });
+
+    if (accessToken) {
+      void logoutCustomer(accessToken).catch(() => {});
     }
   }
 
@@ -760,6 +830,7 @@ export default function ClienteArea() {
 
   return (
     <>
+      <ToastHost />
       {modalNotice ? (
         <NoticeModal notice={modalNotice} onDismiss={handleDismissNotice} />
       ) : (
@@ -879,12 +950,14 @@ const loginHighlights = [
 
 /** Lado escuro do login: mesma linguagem do hero do site (navy + aurora + anéis de sinal). */
 function LoginBrandPanel() {
+  const LoginBackdrop = useContext(LoginBackdropContext);
   return (
     <aside className="login-brand" aria-label="Sobre a Central do Assinante">
       <div className="login-brand-bg" aria-hidden="true">
         <span className="login-brand-aurora" />
         <span className="login-brand-stars" />
         <span className="login-brand-rings" />
+        {LoginBackdrop ? <LoginBackdrop /> : null}
       </div>
 
       <Link to="/" className="login-brand-logo" aria-label="Voltar para o site da AcessaNet">
@@ -931,13 +1004,15 @@ const OTP_RESEND_COOLDOWN_SECONDS = 60;
 const GENERIC_FORGOT_PASSWORD_NOTICE = "Enviamos um código de verificação, caso os dados informados estejam cadastrados.";
 
 function ClienteLogin({ onAuthenticated }) {
+  const appExtras = useContext(AppExtrasContext);
   const [step, setStep] = useState("cpf");
   const [cpf, setCpf] = useState("");
   const [password, setPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() => consumeSessionExpiredNotice());
   const [loading, setLoading] = useState(false);
+  // "reset" = esqueci minha senha; "first" = primeiro acesso (mesmos passos de OTP, mas termina em criar senha + login).
+  const [flow, setFlow] = useState("reset");
+  const [firstAccessMessage, setFirstAccessMessage] = useState("");
 
   const [resetCpf, setResetCpf] = useState("");
   const [resetEmailNotice, setResetEmailNotice] = useState("");
@@ -981,7 +1056,11 @@ function ClienteLogin({ onAuthenticated }) {
     setLoading(true);
     try {
       const result = await checkLocalAccess(cpf);
-      setStep(result?.hasPassword ? "password" : "setup");
+      if (result?.hasPassword) {
+        setStep("password");
+      } else {
+        await startFirstAccess(cpf);
+      }
     } catch (caughtError) {
       setError(resolveErrorMessage(caughtError, "Não foi possível continuar agora."));
     } finally {
@@ -1009,35 +1088,47 @@ function ClienteLogin({ onAuthenticated }) {
     }
   }
 
-  async function handleSetupSubmit(event) {
-    event.preventDefault();
-    setError("");
+  /**
+   * Primeiro acesso: antes de criar a senha o cliente prova que é o titular digitando o código de 6 dígitos
+   * enviado ao e-mail cadastrado. Sem e-mail cadastrado (ou CPF não localizado) -> orientação de suporte.
+   */
+  async function startFirstAccess(targetCpf) {
+    const result = await requestFirstAccessCode(targetCpf);
 
-    if (newPassword !== confirmPassword) {
-      setError("As senhas não coincidem.");
+    if (result?.status === "has_password") {
+      setStep("password");
       return;
     }
 
-    setLoading(true);
-    try {
-      const response = await setupLocalPassword(cpf, newPassword, confirmPassword);
-      onAuthenticated(response);
-    } catch (caughtError) {
-      setError(resolveErrorMessage(caughtError, "Não foi possível criar sua senha agora."));
-    } finally {
-      setLoading(false);
+    if (result?.status !== "sent") {
+      setFirstAccessMessage(result?.message || "Fale com o nosso suporte para liberar o seu primeiro acesso.");
+      setStep("first-support");
+      return;
     }
+
+    setFlow("first");
+    setResetCpf(targetCpf);
+    setResetCode("");
+    setResetToken("");
+    setResetNewPassword("");
+    setResetConfirmPassword("");
+    setResendNotice("");
+    setResetEmailNotice(
+      result.maskedEmail ? `Enviamos um código de verificação para ${result.maskedEmail}` : GENERIC_FORGOT_PASSWORD_NOTICE
+    );
+    setResendCooldown(OTP_RESEND_COOLDOWN_SECONDS);
+    setStep("forgot-otp");
   }
 
   function handleBackToCpf() {
     setStep("cpf");
+    setFlow("reset");
     setPassword("");
-    setNewPassword("");
-    setConfirmPassword("");
     setError("");
   }
 
   function handleOpenForgotPassword() {
+    setFlow("reset");
     setResetCpf(cpf);
     setResetEmailNotice("");
     setResetCode("");
@@ -1050,6 +1141,20 @@ function ClienteLogin({ onAuthenticated }) {
   }
 
   async function requestResetCode(targetCpf) {
+    if (flow === "first") {
+      const result = await requestFirstAccessCode(targetCpf);
+      if (result?.status === "sent") {
+        setResetEmailNotice(
+          result.maskedEmail ? `Enviamos um código de verificação para ${result.maskedEmail}` : GENERIC_FORGOT_PASSWORD_NOTICE
+        );
+        setResendCooldown(OTP_RESEND_COOLDOWN_SECONDS);
+        return;
+      }
+      setFirstAccessMessage(result?.message || "Fale com o nosso suporte para liberar o seu primeiro acesso.");
+      setStep("first-support");
+      return;
+    }
+
     // Dispara os dois em paralelo: forgotPassword sempre "sucede" (mensagem
     // generica, nunca revela se o CPF existe). getMaskedEmailForReset e um
     // endpoint separado, so pra mostrar "lu***@gmail.com" na Etapa 2 -- se
@@ -1141,10 +1246,33 @@ function ClienteLogin({ onAuthenticated }) {
 
     setLoading(true);
     try {
+      if (flow === "first") {
+        // Cria a senha (sem sessão) e em seguida faz o login normal com ela.
+        await setupLocalPassword(resetCpf, resetToken, resetNewPassword, resetConfirmPassword);
+        let response;
+        try {
+          response = await loginLocal(resetCpf, resetNewPassword);
+        } catch {
+          // Senha criada, mas o login automático falhou (rede, limite...): segue para o login normal.
+          setCpf(resetCpf);
+          setPassword("");
+          setFlow("reset");
+          setStep("password");
+          setError("Sua senha foi criada. Digite-a para entrar.");
+          return;
+        }
+        onAuthenticated(response);
+        return;
+      }
       await resetPasswordWithToken(resetToken, resetNewPassword, resetConfirmPassword);
       setStep("forgot-success");
     } catch (caughtError) {
-      setError(resolveErrorMessage(caughtError, "Não foi possível redefinir a senha agora."));
+      setError(
+        resolveErrorMessage(
+          caughtError,
+          flow === "first" ? "Não foi possível criar sua senha agora." : "Não foi possível redefinir a senha agora."
+        )
+      );
     } finally {
       setLoading(false);
     }
@@ -1168,16 +1296,20 @@ function ClienteLogin({ onAuthenticated }) {
   const headline =
     step === "cpf"
       ? "Acompanhe seu contrato AcessaNet com acesso seguro e atendimento integrado."
-      : step === "setup"
-        ? "Primeiro acesso: crie uma senha para proteger sua conta."
+      : step === "first-support"
+        ? "Primeiro acesso: precisamos atualizar o seu cadastro."
         : step === "password"
           ? "Digite sua senha para continuar."
           : step === "forgot-cpf"
             ? "Informe seu CPF ou CNPJ para recuperar o acesso."
             : step === "forgot-otp"
-              ? "Digite o código de verificação enviado por e-mail."
+              ? flow === "first"
+                ? "Primeiro acesso: confirme o código enviado ao seu e-mail."
+                : "Digite o código de verificação enviado por e-mail."
               : step === "forgot-new-password"
-                ? "Crie uma nova senha para sua conta."
+                ? flow === "first"
+                  ? "Quase lá: crie uma senha para proteger sua conta."
+                  : "Crie uma nova senha para sua conta."
                 : "Tudo certo!";
 
   return (
@@ -1194,7 +1326,7 @@ function ClienteLogin({ onAuthenticated }) {
 
         <div className="login-head">
           <span className="login-eyebrow">Central do Assinante</span>
-          <h1>{step.startsWith("forgot") ? "Recuperar acesso" : "Área do Cliente"}</h1>
+          <h1>{flow === "first" && step.startsWith("forgot") ? "Primeiro acesso" : step.startsWith("forgot") ? "Recuperar acesso" : "Área do Cliente"}</h1>
           <p>{headline}</p>
         </div>
 
@@ -1220,8 +1352,8 @@ function ClienteLogin({ onAuthenticated }) {
               {loading ? "Verificando..." : "Continuar"}
             </button>
           </form>
-        ) : step === "setup" ? (
-          <form className="login-form" onSubmit={handleSetupSubmit}>
+        ) : step === "first-support" ? (
+          <div className="login-form">
             <div className="login-cpf-chip">
               <span>{maskDocument(cpf)}</span>
               <button type="button" onClick={handleBackToCpf}>
@@ -1229,36 +1361,22 @@ function ClienteLogin({ onAuthenticated }) {
               </button>
             </div>
 
-            <label htmlFor="cliente-new-password">Crie uma senha</label>
-            <LoginPasswordField
-              autoComplete="new-password"
-              id="cliente-new-password"
-              value={newPassword}
-              onChange={(event) => {
-                setError("");
-                setNewPassword(event.target.value);
-              }}
-            />
-            <p className="login-hint">Pelo menos 8 caracteres, com letras e números.</p>
+            <p className="login-hint">{firstAccessMessage}</p>
 
-            <label htmlFor="cliente-confirm-password">Confirme a senha</label>
-            <LoginPasswordField
-              autoComplete="new-password"
-              id="cliente-confirm-password"
-              value={confirmPassword}
-              onChange={(event) => {
-                setError("");
-                setConfirmPassword(event.target.value);
-              }}
-            />
+            <a
+              className="home-btn home-btn-primary login-submit"
+              href={whatsappLink("Olá! Preciso liberar o meu primeiro acesso na Central do Assinante.")}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <ArrowRight size={18} />
+              Falar com o suporte
+            </a>
 
-            {error ? <p className="login-error">{error}</p> : null}
-
-            <button className="home-btn home-btn-primary login-submit" type="submit" disabled={loading}>
-              {loading ? <Loader2 size={18} className="cliente-spin" /> : <ShieldCheck size={18} />}
-              {loading ? "Criando..." : "Criar senha e entrar"}
+            <button type="button" className="login-link-forgot" onClick={handleBackToCpf}>
+              Voltar
             </button>
-          </form>
+          </div>
         ) : step === "password" ? (
           <form className="login-form" onSubmit={handlePasswordSubmit}>
             <div className="login-cpf-chip">
@@ -1320,7 +1438,7 @@ function ClienteLogin({ onAuthenticated }) {
           <form className="login-form" onSubmit={handleVerifyCodeSubmit}>
             <div className="login-cpf-chip">
               <span>{maskDocument(resetCpf)}</span>
-              <button type="button" onClick={() => setStep("forgot-cpf")}>
+              <button type="button" onClick={() => (flow === "first" ? handleBackToCpf() : setStep("forgot-cpf"))}>
                 Trocar
               </button>
             </div>
@@ -1376,7 +1494,7 @@ function ClienteLogin({ onAuthenticated }) {
 
             <button className="home-btn home-btn-primary login-submit" type="submit" disabled={loading}>
               {loading ? <Loader2 size={18} className="cliente-spin" /> : <KeyRound size={18} />}
-              {loading ? "Alterando..." : "Redefinir senha"}
+              {flow === "first" ? (loading ? "Criando..." : "Criar senha e entrar") : loading ? "Alterando..." : "Redefinir senha"}
             </button>
           </form>
         ) : (
@@ -1399,6 +1517,7 @@ function ClienteLogin({ onAuthenticated }) {
           <ShieldCheck size={15} />
           <span>Sessão protegida por AcessaNet.</span>
         </div>
+        {appExtras?.LoginFooter ? <appExtras.LoginFooter /> : null}
       </div>
 
       <Link to="/" className="login-back">
@@ -1640,7 +1759,7 @@ function ClienteShell({
           <Link to="/" className="cliente-brand" onClick={onCloseMenu}>
             <img src={logo} alt="AcessaNet" />
           </Link>
-          <button className="cliente-icon-button cliente-mobile-only" type="button" onClick={onCloseMenu}>
+          <button aria-label="Fechar menu" className="cliente-icon-button cliente-mobile-only" type="button" onClick={onCloseMenu}>
             <X size={19} />
           </button>
         </div>
@@ -1666,7 +1785,7 @@ function ClienteShell({
 
       <section className="cliente-main">
         <header className="cliente-topbar">
-          <button className="cliente-icon-button cliente-mobile-only" type="button" onClick={onToggleMenu}>
+          <button aria-label="Abrir menu" aria-expanded={menuOpen} className="cliente-icon-button cliente-mobile-only" type="button" onClick={onToggleMenu}>
             <Menu size={20} />
           </button>
 
@@ -1730,7 +1849,7 @@ function PageToolbar({ dataLoading, onRefresh, pageKey }) {
         <h2>{pageTitle.title}</h2>
         {pageTitle.description ? <p>{pageTitle.description}</p> : null}
       </div>
-      <button className="cliente-soft-action" type="button" onClick={onRefresh} disabled={dataLoading}>
+      <button aria-label="Atualizar" className="cliente-soft-action" type="button" onClick={onRefresh} disabled={dataLoading}>
         <RefreshCw size={17} className={dataLoading ? "cliente-spin" : ""} />
         <span className="cliente-action-label">Atualizar</span>
       </button>
@@ -1774,6 +1893,7 @@ function ClienteHome({
 
       <div className="home-layout">
         <div className="home-main">
+          <RatingPrompt />
           {pendingSignatures.length > 0 ? (
             <SignaturePendingBanner
               count={pendingSignatures.length}
@@ -1784,7 +1904,7 @@ function ClienteHome({
           {initialLoading ? (
             <HomeSkeletonCard tall />
           ) : (
-            <ConnectionHeroCard connection={connection} contract={contract} offline={offline} />
+            <ConnectionHeroCard contract={contract} offline={offline} />
           )}
 
           {initialLoading ? (
@@ -1841,22 +1961,25 @@ function HomeHeader({ alertCount, customer, onRefresh, refreshing }) {
   );
 }
 
-function ConnectionHeroCard({ connection, contract, offline }) {
-  const tone = connectionTone(connection, contract);
-  const label = connectionLabel(connection, contract);
+// Sem selo "Online/Offline" no Início: o SGP não informa a sessão de conexão do cliente e a OLT não é confiável o
+// bastante para isso (contrato ativo nunca é "online"). Só o contrato encerrado/suspenso aparece, porque vem do SGP.
+function ConnectionHeroCard({ contract, offline }) {
+  const ended = isServiceEnded(contract);
   const speed = parsePlanSpeed(contract?.planName);
 
   return (
-    <section className={`home-card home-connection-card tone-${tone} ${offline ? "is-offline" : ""}`}>
+    <section className={`home-card home-connection-card tone-${ended ? "slate" : "blue"} ${offline ? "is-offline" : ""}`}>
       <div className="home-connection-top">
         <span className="home-card-eyebrow home-card-eyebrow-onlight">
           <Wifi size={16} />
           Sua internet
         </span>
-        <span className="home-status-chip">
-          <span className="home-status-dot" />
-          {label}
-        </span>
+        {ended ? (
+          <span className="home-status-chip">
+            <span className="home-status-dot" />
+            Serviço encerrado
+          </span>
+        ) : null}
       </div>
 
       <strong className="home-connection-plan">
@@ -2117,7 +2240,9 @@ function buildHomeAnnouncements({ connection, contract }) {
     });
   }
 
-  if (contract && contract.status !== "ACTIVE") {
+  // Só avisa quando o SGP diz que o contrato está suspenso ou cancelado. Status desconhecido (dados ainda não
+  // carregados, sessão caindo) não é pendência: antes aparecia "Contrato com pendência / Não informado".
+  if (contract && (contract.status === "SUSPENDED" || contract.status === "CANCELED")) {
     items.push({
       id: "contract",
       tone: "red",
@@ -2204,6 +2329,15 @@ function FaturasPage({ billing, contract, error, invoiceData, loading, onPromise
     ? invoiceListSummary(groupedInvoices)
     : billingDetail(billing);
   const visibleInvoices = groupedInvoices[selectedStatus] || [];
+
+  // Abre na aba que tem o que importa: vencidas primeiro, depois em aberto. Antes abria sempre em "Em aberto",
+  // que com fatura vencida mostrava "Nenhuma fatura em aberto" e escondia a cobrança. Respeita a escolha do usuário.
+  const pickedStatusRef = useRef(false);
+  useEffect(() => {
+    if (pickedStatusRef.current) return;
+    if (groupedInvoices.OVERDUE.length > 0) setSelectedStatus("OVERDUE");
+    else if (groupedInvoices.OPEN.length > 0) setSelectedStatus("OPEN");
+  }, [groupedInvoices]);
 
   async function handleCopy(value, actionId) {
     const copied = await copyToClipboard(value);
@@ -2312,7 +2446,10 @@ function FaturasPage({ billing, contract, error, invoiceData, loading, onPromise
               aria-selected={selectedStatus === status}
               className={selectedStatus === status ? "is-active" : ""}
               key={status}
-              onClick={() => setSelectedStatus(status)}
+              onClick={() => {
+                pickedStatusRef.current = true;
+                setSelectedStatus(status);
+              }}
               role="tab"
               type="button"
             >
@@ -2487,7 +2624,7 @@ function AssinaturasPage({ data, loading, onRefresh, onSignNow }) {
             <h3>Consulte documentos que precisam da sua assinatura e acompanhe o andamento das solicitações.</h3>
           </div>
         </div>
-        <button className="cliente-soft-action" type="button" onClick={onRefresh} disabled={loading}>
+        <button aria-label="Atualizar" className="cliente-soft-action" type="button" onClick={onRefresh} disabled={loading}>
           <RefreshCw size={17} className={loading ? "cliente-spin" : ""} />
           <span className="cliente-action-label">Atualizar status</span>
         </button>
@@ -2704,6 +2841,8 @@ function PlanoPage({ contract, customer }) {
 }
 
 const DIAGNOSIS_REQUEST_TIMEOUT_MS = 15000;
+/** Mesmo limite do servidor (supportRoutes.ts). */
+const OBSERVATION_MAX_LENGTH = 300;
 
 function AtendimentoPage({ categories, connection, currentTicket, loading: dataLoading, onRefresh, selectedContract, tickets }) {
   const activeTicket = getActiveTicket(currentTicket, tickets, selectedContract?.id);
@@ -2718,9 +2857,25 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
   const [error, setError] = useState("");
   const [connectionChecked, setConnectionChecked] = useState(false);
   const [contactPhone, setContactPhone] = useState("");
+  const [preferredPeriod, setPreferredPeriod] = useState("");
+  const [observation, setObservation] = useState("");
+  const [documentsOpen, setDocumentsOpen] = useState(false);
+  // Ponto da casa capturado no passo de revisão; segue com o chamado assim que o protocolo existir.
+  const [locationDraft, setLocationDraft] = useState(null);
+  // O que falta preencher na revisão, por campo: { phone?: texto, period?: texto }. Mostrado em vermelho.
+  const [fieldErrors, setFieldErrors] = useState({});
   const activeDiagnosisRequestRef = useRef(null);
 
-  const chatTicket = createdTicket || activeTicket;
+  // O chamado que acabou de ser aberto aqui é só um retrato do momento da criação. Assim que a lista atualizada
+  // (a cada 30 s, ao voltar ao app, ao chegar um push) traz o mesmo protocolo, vale o dado novo -- senão o status
+  // ficava "Em análise" até fechar o app. Se o chamado já foi encerrado, a tela volta ao início do atendimento.
+  const liveCreatedTicket = createdTicket
+    ? tickets.find((ticket) => ticket.protocol && ticket.protocol === createdTicket.protocol) ??
+      (activeTicket?.protocol && activeTicket.protocol === createdTicket.protocol ? activeTicket : undefined)
+    : undefined;
+  const createdTicketView =
+    createdTicket && !(liveCreatedTicket && isTicketFinished(liveCreatedTicket)) ? { ...createdTicket, ...liveCreatedTicket } : null;
+  const chatTicket = createdTicketView || activeTicket;
   const orderedCategories = useMemo(() => orderAttendanceCategories(categories), [categories]);
   const financialCategories = useMemo(() => resolveFinancialAttendanceCategories(categories), [categories]);
   const selectableCategories = useMemo(
@@ -2731,7 +2886,7 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
     () => selectableCategories.find((category) => category.id === selectedCategoryId),
     [selectableCategories, selectedCategoryId]
   );
-  const latestTicket = createdTicket || getLatestTicket(tickets, selectedContract?.id);
+  const latestTicket = createdTicketView || getLatestTicket(tickets, selectedContract?.id);
   const currentStep = getAttendanceStep({ chatTicket, diagnosis, selectedCategoryId });
 
   useEffect(() => {
@@ -2812,6 +2967,17 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
     }
   }
 
+  // Atalho do app (pressionar e segurar o ícone): /cliente/atendimento?categoria=router_password abre direto o fluxo.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const requestedCategory = new URLSearchParams(location.search).get("categoria");
+  useEffect(() => {
+    if (!requestedCategory || !selectedContract?.id || !categories?.some((category) => category.id === requestedCategory)) return;
+    navigate(location.pathname, { replace: true });
+    void handleSelectCategory(requestedCategory);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedCategory, selectedContract?.id, categories]);
+
   async function handleSelectCategory(categoryId) {
     setDiagnosis(null);
     setAnswers({});
@@ -2859,6 +3025,8 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
   }
 
   function resetAttendanceFlow() {
+    setLocationDraft(null);
+    setFieldErrors({});
     setSelectedCategoryId("");
     setDiagnosis(null);
     setAnswers({});
@@ -2872,8 +3040,24 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
       return;
     }
 
+    // Mostra TUDO o que falta de uma vez, em vermelho no próprio campo (o botão não fica mais "morto").
+    const missing = {};
     if (!isValidBrazilianPhone(contactPhone)) {
-      setError("Informe um telefone brasileiro válido para contato.");
+      missing.phone = contactPhone.trim()
+        ? "Telefone inválido. Informe o DDD e o número, por exemplo (11) 99999-9999."
+        : "Informe um telefone ou celular para contato.";
+    }
+    if (!PREFERRED_PERIOD_OPTIONS.some((option) => option.value === preferredPeriod)) {
+      missing.period = "Escolha o horário preferencial de atendimento.";
+    }
+    setFieldErrors(missing);
+    if (Object.keys(missing).length > 0) {
+      setError("");
+      window.requestAnimationFrame(() => {
+        const target = document.getElementById(missing.phone ? "cliente-contact-phone" : "cliente-period-field");
+        target?.scrollIntoView({ behavior: "smooth", block: "center" });
+        target?.focus({ preventScroll: true });
+      });
       return;
     }
 
@@ -2886,17 +3070,47 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
         body: {
           contractId: selectedContract.id,
           diagnosisId: diagnosis.diagnosisId,
-          contactPhone
+          contactPhone,
+          preferredPeriod,
+          ...(observation.trim() ? { observation: observation.trim() } : {})
         }
       });
       setCreatedTicket(normalizeTicketVisit(ticket, selectedContract.id));
+      setObservation("");
+      setFieldErrors({});
+      showToast({
+        tone: "success",
+        title: "Chamado aberto com sucesso!",
+        message: `Protocolo #${ticket?.protocol || ticket?.id}. Nossa equipe já recebeu o seu pedido e vai entrar em contato.`
+      });
+      if (locationDraft && ticket?.protocol) {
+        // O chamado já foi aberto: se o envio do ponto falhar, o cartão do chamado continua oferecendo o reenvio.
+        try {
+          await submitLocation(selectedContract.id, ticket.protocol, locationDraft);
+        } catch {
+          // sem aviso: nada a desfazer, e o cartão do chamado mostra "Enviar localização da minha casa"
+        }
+        setLocationDraft(null);
+      }
       await onRefresh();
     } catch (caughtError) {
-      setError(resolveErrorMessage(caughtError, "Não foi possível abrir o chamado."));
+      const message = resolveErrorMessage(caughtError, "Não foi possível abrir o chamado.");
+      setError(message);
+      showToast({ tone: "danger", title: "Não foi possível abrir o chamado", message });
       await onRefresh();
     } finally {
       setCreatingTicket(false);
     }
+  }
+
+  if (documentsOpen) {
+    return (
+      <DocumentsPage
+        onBack={() => setDocumentsOpen(false)}
+        onDone={onRefresh}
+        selectedContract={selectedContract}
+      />
+    );
   }
 
   if (chatTicket) {
@@ -2908,16 +3122,17 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
             <section className="cliente-attendance-flow-card">
               <div className="cliente-attendance-card-head">
                 <span>ATENDIMENTO EM ANDAMENTO</span>
-                <h3>{createdTicket ? "Atendimento aberto" : "Você já possui um atendimento em andamento."}</h3>
-                <p>{createdTicket ? "Nossa equipe recebeu sua solicitação. O chat será aberto quando um atendente iniciar a conversa." : "Continue o acompanhamento com a equipe AcessaNet."}</p>
+                <h3>{createdTicketView ? "Atendimento aberto" : "Você já possui um atendimento em andamento."}</h3>
+                <p>{createdTicketView ? "Nossa equipe recebeu sua solicitação. O chat será aberto quando um atendente iniciar a conversa." : "Continue o acompanhamento com a equipe AcessaNet."}</p>
               </div>
               <InlineNotice
-                tone={createdTicket ? "success" : "warning"}
-                title={createdTicket ? `Protocolo #${chatTicket.protocol || chatTicket.id}` : `Chamado #${chatTicket.protocol || chatTicket.id}`}
-                message={createdTicket ? "Chamado criado com sucesso." : "Para evitar duplicidade, use o chamado já aberto."}
+                tone={createdTicketView ? "success" : "warning"}
+                title={createdTicketView ? `Protocolo #${chatTicket.protocol || chatTicket.id}` : `Chamado #${chatTicket.protocol || chatTicket.id}`}
+                message={createdTicketView ? "Chamado criado com sucesso." : "Para evitar duplicidade, use o chamado já aberto."}
               />
             </section>
             <TicketPanel ticket={chatTicket} />
+            <DocumentsEntry onOpen={() => setDocumentsOpen(true)} />
             {/* Chat desativado temporariamente na abertura/acompanhamento de chamado (pedido do NOC, 2026-09-28) */}
           </div>
           <AttendanceSidebar
@@ -2998,6 +3213,7 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
               categories={orderedCategories}
               financialCategories={financialCategories}
               loading={dataLoading}
+              onOpenDocuments={() => setDocumentsOpen(true)}
               onSelect={(categoryId) => void handleSelectCategory(categoryId)}
               selectedCategoryId={selectedCategoryId}
               selectedContract={selectedContract}
@@ -3023,7 +3239,20 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
               diagnosis={diagnosis}
               onBack={resetAttendanceFlow}
               contactPhone={contactPhone}
-              onContactPhoneChange={(value) => setContactPhone(formatBrazilianPhone(value))}
+              preferredPeriod={preferredPeriod}
+              onPreferredPeriodChange={(value) => {
+                setPreferredPeriod(value);
+                setFieldErrors((current) => ({ ...current, period: undefined }));
+              }}
+              observation={observation}
+              onObservationChange={setObservation}
+              locationDraft={locationDraft}
+              onLocationDraftChange={setLocationDraft}
+              fieldErrors={fieldErrors}
+              onContactPhoneChange={(value) => {
+                setContactPhone(formatBrazilianPhone(value));
+                setFieldErrors((current) => ({ ...current, phone: undefined }));
+              }}
               onCreateTicket={handleCreateTicket}
               selectedCategory={selectedCategory}
               selectedContract={selectedContract}
@@ -3038,6 +3267,288 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
           selectedCategoryId={selectedCategoryId}
         />
       </div>
+    </div>
+  );
+}
+
+const DOCUMENT_MAX_FILES = 5;
+/** Mesmos limites do servidor (documentsService.ts). */
+const DOCUMENT_MAX_FILE_BYTES = 8 * 1024 * 1024;
+const DOCUMENT_ACCEPT = ".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png";
+const DOCUMENT_EXTENSIONS = ["pdf", "jpg", "jpeg", "png"];
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatFileSize(bytes) {
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function DocumentsEntry({ onOpen }) {
+  return (
+    <section className="cliente-issue-section" aria-labelledby="cliente-documentos-title">
+      <div className="cliente-issue-section-head">
+        <h4 id="cliente-documentos-title">Documentos</h4>
+        <p>Envie documentos para a nossa equipe, como RG, comprovante de residência ou contrato assinado.</p>
+      </div>
+      <div className="cliente-issue-grid">
+        <button className="cliente-issue-card tone-blue" type="button" onClick={onOpen}>
+          <span className="cliente-issue-icon">
+            <Paperclip size={20} />
+          </span>
+          <span className="cliente-issue-copy">
+            <strong>Anexar documentos</strong>
+            <small>Envie PDF, JPG ou PNG pelo celular ou computador.</small>
+          </span>
+          <ChevronRight size={18} className="cliente-issue-chevron" />
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function DocumentsPage({ onBack, onDone, selectedContract }) {
+  const [files, setFiles] = useState([]);
+  const [description, setDescription] = useState("");
+  const [phone, setPhone] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+  // O que falta preencher, por campo: { files?: texto, phone?: texto }. Mostrado em vermelho.
+  const [fieldErrors, setFieldErrors] = useState({});
+
+  function handlePick(event) {
+    const picked = Array.from(event.target.files || []);
+    event.target.value = "";
+    const accepted = [];
+    let message = "";
+
+    for (const file of picked) {
+      const extension = file.name.split(".").pop()?.toLowerCase() || "";
+      if (!DOCUMENT_EXTENSIONS.includes(extension)) {
+        message = "Envie apenas arquivos PDF, JPG ou PNG.";
+      } else if (file.size > DOCUMENT_MAX_FILE_BYTES) {
+        message = `O arquivo "${file.name}" passa de 8 MB.`;
+      } else if (file.size === 0) {
+        message = `O arquivo "${file.name}" está vazio.`;
+      } else {
+        accepted.push(file);
+      }
+    }
+
+    const next = [...files, ...accepted];
+    if (next.length > DOCUMENT_MAX_FILES) {
+      message = `Envie até ${DOCUMENT_MAX_FILES} arquivos por vez.`;
+    }
+    setFiles(next.slice(0, DOCUMENT_MAX_FILES));
+    setError(message);
+    if (next.length > 0) setFieldErrors((current) => ({ ...current, files: undefined }));
+  }
+
+  async function handleSubmit() {
+    if (!selectedContract?.id || sending) return;
+    const missing = {};
+    if (!files.length) missing.files = "Escolha ao menos um arquivo (PDF, JPG ou PNG).";
+    if (!isValidBrazilianPhone(phone)) {
+      missing.phone = phone.trim()
+        ? "Telefone inválido. Informe o DDD e o número, por exemplo (11) 99999-9999."
+        : "Informe um telefone ou celular para contato.";
+    }
+    setFieldErrors(missing);
+    if (Object.keys(missing).length > 0) {
+      setError("");
+      window.requestAnimationFrame(() => {
+        const target = document.getElementById(missing.files ? "cliente-documents-files" : "cliente-documents-phone");
+        target?.scrollIntoView({ behavior: "smooth", block: "center" });
+        target?.focus({ preventScroll: true });
+      });
+      return;
+    }
+
+    setSending(true);
+    setError("");
+    try {
+      const encoded = await Promise.all(
+        files.map(async (file) => ({ name: file.name, contentBase64: await readFileAsBase64(file) }))
+      );
+      const response = await clienteRequest("/v1/support/documents", {
+        method: "POST",
+        body: {
+          contractId: selectedContract.id,
+          contactPhone: phone,
+          ...(description.trim() ? { description: description.trim() } : {}),
+          files: encoded
+        }
+      });
+      setResult(response);
+      setFiles([]);
+      setDescription("");
+      setFieldErrors({});
+      const partial = response?.failed?.length > 0;
+      showToast({
+        tone: partial ? "danger" : "success",
+        title: partial ? "Chamado aberto, mas faltou enviar arquivo" : "Documentos enviados com sucesso!",
+        message: partial
+          ? `Protocolo #${response.protocol}. Não enviamos: ${response.failed.join(", ")}. Envie esses arquivos de novo.`
+          : `Protocolo #${response.protocol}. Nossa equipe recebeu seus documentos.`
+      });
+      await onDone?.();
+    } catch (caughtError) {
+      const message = resolveErrorMessage(caughtError, "Não foi possível enviar os documentos.");
+      setError(message);
+      showToast({ tone: "danger", title: "Não foi possível enviar os documentos", message });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  if (result) {
+    const partial = result.failed?.length > 0;
+    return (
+      <div className="cliente-attendance-page">
+        <section className="cliente-attendance-flow-card">
+          <div className="cliente-attendance-card-head">
+            <span>DOCUMENTOS</span>
+            <h3>{partial ? "Envio parcial" : "Documentos enviados"}</h3>
+            <p>Nossa equipe recebeu seu chamado e vai analisar os arquivos.</p>
+          </div>
+          <InlineNotice
+            tone={partial ? "warning" : "success"}
+            title={`Protocolo #${result.protocol}`}
+            message={
+              partial
+                ? `Não conseguimos enviar: ${result.failed.join(", ")}. Abra "Anexar documentos" de novo para reenviar só esses arquivos.`
+                : `${result.sent} ${result.sent === 1 ? "arquivo enviado" : "arquivos enviados"} com sucesso.`
+            }
+          />
+          <div className="cliente-attendance-actions">
+            <button className="cliente-primary-action" type="button" onClick={onBack}>
+              <Check size={18} />
+              Concluir
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="cliente-attendance-page">
+      <section className="cliente-attendance-flow-card">
+        <div className="cliente-attendance-card-head">
+          <span>DOCUMENTOS</span>
+          <h3>Anexar documentos</h3>
+          <p>Envie até {DOCUMENT_MAX_FILES} arquivos (PDF, JPG ou PNG, de até 8 MB cada) para o contrato {selectedContract?.id}.</p>
+        </div>
+
+        {error ? <InlineNotice tone="danger" title="Documentos" message={error} /> : null}
+
+        {fieldErrors.files || fieldErrors.phone ? (
+          <div className="cliente-errors-summary" role="alert">
+            <strong>Falta preencher para enviar:</strong>
+            <ul>
+              {fieldErrors.files ? <li>Arquivos</li> : null}
+              {fieldErrors.phone ? <li>Telefone/Celular para contato</li> : null}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="cliente-attendance-text-form">
+          <label htmlFor="cliente-documents-files">Arquivos <span className="cliente-required">(obrigatório)</span></label>
+          <input
+            aria-invalid={fieldErrors.files ? true : undefined}
+            accept={DOCUMENT_ACCEPT}
+            disabled={sending || files.length >= DOCUMENT_MAX_FILES}
+            id="cliente-documents-files"
+            multiple
+            type="file"
+            onChange={handlePick}
+          />
+          {fieldErrors.files ? <p className="cliente-field-error">{fieldErrors.files}</p> : null}
+          {files.length ? (
+            <ul className="cliente-review-list">
+              {files.map((file, index) => (
+                <li className="cliente-review-item" key={`${file.name}-${index}`}>
+                  <span>
+                    <FileText size={16} /> {file.name}
+                  </span>
+                  <span>
+                    {formatFileSize(file.size)}{" "}
+                    <button
+                      aria-label={`Remover ${file.name}`}
+                      className="cliente-soft-action"
+                      disabled={sending}
+                      type="button"
+                      onClick={() => setFiles((current) => current.filter((_, position) => position !== index))}
+                    >
+                      <X size={14} />
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+
+        <div className="cliente-attendance-text-form">
+          <label htmlFor="cliente-documents-description">Observação (opcional)</label>
+          <textarea
+            className="cliente-offline-description"
+            id="cliente-documents-description"
+            maxLength={500}
+            placeholder="Ex.: RG e comprovante de residência para atualizar o cadastro."
+            rows={3}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </div>
+
+        <div className="cliente-attendance-text-form cliente-contact-phone-field">
+          <label htmlFor="cliente-documents-phone">Telefone/Celular para contato <span className="cliente-required">(obrigatório)</span></label>
+          <input
+            aria-describedby={fieldErrors.phone ? "cliente-documents-phone-error" : undefined}
+            aria-invalid={fieldErrors.phone ? true : phone ? !isValidBrazilianPhone(phone) : undefined}
+            autoComplete="tel"
+            id="cliente-documents-phone"
+            inputMode="tel"
+            maxLength={16}
+            placeholder="(11) 99999-9999"
+            type="tel"
+            value={phone}
+            onChange={(event) => {
+              setPhone(formatBrazilianPhone(event.target.value));
+              setFieldErrors((current) => ({ ...current, phone: undefined }));
+            }}
+          />
+          {fieldErrors.phone ? (
+            <p className="cliente-field-error" id="cliente-documents-phone-error">{fieldErrors.phone}</p>
+          ) : phone && !isValidBrazilianPhone(phone) ? (
+            <small>Informe DDD e telefone ou celular.</small>
+          ) : null}
+        </div>
+
+        <div className="cliente-attendance-actions">
+          <button className="cliente-soft-action" disabled={sending} type="button" onClick={onBack}>
+            <ArrowLeft size={18} />
+            Voltar
+          </button>
+          <button
+            className="cliente-primary-action"
+            disabled={sending}
+            type="button"
+            onClick={() => void handleSubmit()}
+          >
+            {sending ? <Loader2 size={18} className="cliente-spin" /> : <Send size={18} />}
+            {sending ? "Enviando..." : "Enviar documentos"}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -3130,7 +3641,7 @@ function AttendanceStepper({ currentStep }) {
   );
 }
 
-function IssueSelectionStep({ categories, financialCategories, loading, onSelect, selectedCategoryId, selectedContract }) {
+function IssueSelectionStep({ categories, financialCategories, loading, onOpenDocuments, onSelect, selectedCategoryId, selectedContract }) {
   if (loading && !categories.length) {
     return (
       <div className="cliente-issue-grid" aria-label="Carregando opções de atendimento">
@@ -3181,6 +3692,8 @@ function IssueSelectionStep({ categories, financialCategories, loading, onSelect
           ))}
         </div>
       </section>
+
+      <DocumentsEntry onOpen={onOpenDocuments} />
     </div>
   );
 }
@@ -3349,6 +3862,13 @@ function AttendanceDetailsStep({ diagnosis, loading, onAnswer, onBack, onTextAns
   );
 }
 
+const PREFERRED_PERIOD_OPTIONS = [
+  { value: "MORNING", label: "Manhã", hint: "Até o meio-dia" },
+  { value: "AFTERNOON", label: "Tarde", hint: "Depois do meio-dia" },
+  { value: "EVENING", label: "Noite", hint: "Fim do dia" },
+  { value: "FULL_DAY", label: "Integral", hint: "Qualquer horário" }
+];
+
 function AttendanceReviewStep({
   answerTrail,
   contactPhone,
@@ -3357,13 +3877,27 @@ function AttendanceReviewStep({
   onBack,
   onContactPhoneChange,
   onCreateTicket,
+  onPreferredPeriodChange,
+  observation,
+  onObservationChange,
+  locationDraft,
+  onLocationDraftChange,
+  fieldErrors = {},
+  preferredPeriod,
   selectedCategory,
   selectedContract
 }) {
   const address = selectedContract ? `${selectedContract.addressLine}, ${selectedContract.city} - ${selectedContract.state}` : undefined;
-  const description = answerTrail.length
-    ? answerTrail.map((item) => `${item.label}: ${item.value}`).join(" | ")
-    : diagnosis?.customerMessage || "Triagem concluída.";
+  const description = answerTrail.length ? (
+    <ul className="cliente-review-answers">
+      {answerTrail.map((item) => (
+        <li key={item.id}>
+          <span>{item.label}</span>
+          {item.value}
+        </li>
+      ))}
+    </ul>
+  ) : diagnosis?.customerMessage || "Triagem concluída.";
 
   if (diagnosis?.state === "BLOCKED" || !diagnosis?.canOpenTicket) {
     return (
@@ -3398,22 +3932,81 @@ function AttendanceReviewStep({
         <ReviewItem label="Descrição" value={description} />
       </div>
 
+      {fieldErrors.phone || fieldErrors.period ? (
+        <div className="cliente-errors-summary" role="alert">
+          <strong>Falta preencher para abrir o atendimento:</strong>
+          <ul>
+            {fieldErrors.phone ? <li>Telefone/Celular para contato</li> : null}
+            {fieldErrors.period ? <li>Horário preferencial de atendimento</li> : null}
+          </ul>
+        </div>
+      ) : null}
+
       <div className="cliente-attendance-text-form cliente-contact-phone-field">
-        <label htmlFor="cliente-contact-phone">Telefone/Celular para contato</label>
+        <label htmlFor="cliente-contact-phone">Telefone/Celular para contato <span className="cliente-required">(obrigatório)</span></label>
         <input
-          aria-invalid={contactPhone ? !isValidBrazilianPhone(contactPhone) : undefined}
+          aria-describedby={fieldErrors.phone ? "cliente-contact-phone-error" : undefined}
+          aria-invalid={fieldErrors.phone ? true : contactPhone ? !isValidBrazilianPhone(contactPhone) : undefined}
           autoComplete="tel"
           id="cliente-contact-phone"
           inputMode="tel"
           maxLength={16}
           placeholder="(11) 99999-9999"
+          required
           type="tel"
           value={contactPhone}
           onChange={(event) => onContactPhoneChange(event.target.value)}
         />
-        {contactPhone && !isValidBrazilianPhone(contactPhone) ? (
+        {fieldErrors.phone ? (
+          <p className="cliente-field-error" id="cliente-contact-phone-error">{fieldErrors.phone}</p>
+        ) : contactPhone && !isValidBrazilianPhone(contactPhone) ? (
           <small>Informe DDD e telefone ou celular.</small>
         ) : null}
+      </div>
+
+      <LocationCaptureField value={locationDraft} onChange={onLocationDraftChange} disabled={creatingTicket} />
+
+      <fieldset className={`cliente-period-field ${fieldErrors.period ? "has-error" : ""}`} id="cliente-period-field" tabIndex={-1}>
+        <legend>Horário preferencial de atendimento <span className="cliente-required">(obrigatório)</span></legend>
+        <div className="cliente-period-options" role="radiogroup" aria-label="Horário preferencial de atendimento" aria-required="true">
+          {PREFERRED_PERIOD_OPTIONS.map((option) => {
+            const selected = preferredPeriod === option.value;
+            return (
+              <button
+                aria-checked={selected}
+                className={`cliente-period-option ${selected ? "is-selected" : ""}`}
+                disabled={creatingTicket}
+                key={option.value}
+                role="radio"
+                type="button"
+                onClick={() => onPreferredPeriodChange(option.value)}
+              >
+                <strong>{option.label}</strong>
+                <small>{option.hint}</small>
+              </button>
+            );
+          })}
+        </div>
+        {fieldErrors.period ? <p className="cliente-field-error" role="alert">{fieldErrors.period}</p> : null}
+        <small className="cliente-period-note">É uma preferência: a nossa equipe confirma a data e a hora da visita.</small>
+      </fieldset>
+
+      <div className="cliente-attendance-text-form cliente-observation-field">
+        <label htmlFor="cliente-observation">
+          Observação <span className="cliente-optional">(opcional)</span>
+        </label>
+        <textarea
+          disabled={creatingTicket}
+          id="cliente-observation"
+          maxLength={OBSERVATION_MAX_LENGTH}
+          placeholder="Ex.: não vou estar em casa hoje das 14h às 17h"
+          rows={3}
+          value={observation}
+          onChange={(event) => onObservationChange(event.target.value)}
+        />
+        <small className="cliente-observation-count">
+          {observation.length}/{OBSERVATION_MAX_LENGTH}
+        </small>
       </div>
 
       <div className="cliente-attendance-actions">
@@ -3425,7 +4018,7 @@ function AttendanceReviewStep({
           className="cliente-primary-action"
           type="button"
           onClick={onCreateTicket}
-          disabled={creatingTicket || !isValidBrazilianPhone(contactPhone)}
+          disabled={creatingTicket}
         >
           {creatingTicket ? <Loader2 size={18} className="cliente-spin" /> : <MessageCircle size={18} />}
           {creatingTicket ? "Abrindo atendimento..." : "Abrir atendimento"}
@@ -3457,7 +4050,7 @@ function ReviewItem({ label, value }) {
   return (
     <div className="cliente-review-item">
       <span>{label}</span>
-      <strong>{value || "Não informado"}</strong>
+      {typeof value === "object" && value ? value : <strong>{value || "Não informado"}</strong>}
     </div>
   );
 }
@@ -3465,6 +4058,7 @@ function ReviewItem({ label, value }) {
 function AttendanceSidebar({ latestTicket, loading, onRefresh, selectedCategoryId }) {
   return (
     <aside className="cliente-attendance-sidebar" aria-label="Ajuda e histórico">
+      <RatingPrompt />
       <LatestTicketCard latestTicket={latestTicket} loading={loading} onRefresh={onRefresh} />
       <QuickTipCard selectedCategoryId={selectedCategoryId} />
     </aside>
@@ -3488,11 +4082,11 @@ function LatestTicketCard({ latestTicket, loading, onRefresh }) {
         <div className="cliente-latest-ticket">
           <div className="cliente-latest-ticket-meta">
             <span className={`cliente-ticket-badge tone-${tone}`}>{ticketStatusLabel(ticket.status, ticket.statusInterno)}</span>
-            <small>{formatDateTime(ticket.createdAt || ticket.updatedAt) || "Data não informada"}</small>
+            <small>{formatTicketOpenedAt(ticket.createdAt || ticket.updatedAt) || "Data não informada"}</small>
           </div>
           <strong>#{ticket.protocol || ticket.id}</strong>
           <h4>{ticket.title || "Atendimento"}</h4>
-          <AppointmentNotice appointment={ticket.appointment} compact />
+          {isTicketFinished(ticket) ? null : <AppointmentNotice appointment={ticket.appointment} compact />}
           <p>{latestTicketDescription(ticket)}</p>
         </div>
       ) : (
@@ -3687,11 +4281,7 @@ function CustomerChat({ contractId, onClosed, ticket }) {
   if (conversation?.status === "closed") {
     return (
       <section className="cliente-panel cliente-chat-panel">
-        <InlineNotice
-          tone="success"
-          title="Atendimento encerrado"
-          message="A conversa foi concluída pela equipe AcessaNet."
-        />
+        <InlineNotice tone="success" title="Atendimento realizado com sucesso!" />
       </section>
     );
   }
@@ -3744,6 +4334,7 @@ function ChamadosPage({ currentTicket, loading, tickets }) {
 
   return (
     <div className="cliente-page-stack">
+      <RatingPrompt />
       {loading ? <LoadingInline label="Carregando chamados" /> : null}
       {!allTickets.length ? (
         <InlineNotice tone="success" title="Nenhum chamado encontrado" message="Aqui aparecem todos os seus chamados, abertos e encerrados." />
@@ -3756,6 +4347,7 @@ function ChamadosPage({ currentTicket, loading, tickets }) {
 }
 
 function PerfilPage({ contracts, customer, onLogout, onSelectContract, selectedContractId }) {
+  const appExtras = useContext(AppExtrasContext);
   return (
     <div className="cliente-page-grid">
       <section className="cliente-panel">
@@ -3795,6 +4387,8 @@ function PerfilPage({ contracts, customer, onLogout, onSelectContract, selectedC
       </section>
 
       <SecurityPasswordSection />
+
+      {appExtras?.ProfileExtras ? <appExtras.ProfileExtras customer={customer} contracts={contracts} /> : null}
     </div>
   );
 }
@@ -3928,14 +4522,16 @@ function TicketPanel({ actionLabel, actionTo, ticket }) {
           <h3>{ticket.title || "Atendimento"}</h3>
         </div>
       </div>
-      <AppointmentNotice appointment={ticket.appointment} />
+      {isTicketFinished(ticket) ? null : <AppointmentNotice appointment={ticket.appointment} />}
+      {!isTicketFinished(ticket) && ticket.protocol ? <VisitLocationCard ticket={ticket} /> : null}
+      {isClosed ? <InlineNotice tone="success" title="Atendimento realizado com sucesso!" /> : null}
       <InfoList
         items={[
           ["Status", ticketStatusLabel(ticket.status, ticket.statusInterno)],
           ["Contrato", ticket.contractId],
-          ["Aberto em", formatDateTime(ticket.createdAt || ticket.openedAt)],
+          ["Aberto em", formatTicketOpenedAt(ticket.createdAt || ticket.openedAt)],
           ["Atualizado em", formatDateTime(ticket.updatedAt)],
-          ...(isClosed && ticket.closureReason ? [["Motivo do encerramento", ticket.closureReason]] : [])
+          ...(!isClosed && ticket.preferredPeriod ? [["Horário preferencial", ticket.preferredPeriod]] : [])
         ]}
       />
       {actionTo && !isClosed ? (
@@ -3990,7 +4586,7 @@ function InlineNotice({ message, title, tone = "info" }) {
       <Icon size={20} />
       <div>
         <strong>{title}</strong>
-        <p>{message}</p>
+        {message ? <p>{message}</p> : null}
       </div>
     </section>
   );
@@ -4140,6 +4736,11 @@ function getLatestTicket(tickets = [], contractId) {
     })[0];
 }
 
+// Chamado encerrado, concluído ou cancelado não tem mais visita pendente.
+function isTicketFinished(ticket) {
+  return ticket?.statusInterno === "closed" || ticket?.status === "RESOLVED" || ticket?.status === "CANCELED";
+}
+
 function ticketStatusTone(status, internalStatus) {
   if (internalStatus === "closed" || status === "RESOLVED") return "green";
   if (status === "CANCELED") return "red";
@@ -4150,7 +4751,7 @@ function ticketStatusTone(status, internalStatus) {
 function latestTicketDescription(ticket) {
   if (!ticket) return "";
   const label = ticketStatusLabel(ticket.status, ticket.statusInterno).toLowerCase();
-  if (ticket.statusInterno === "closed" || ticket.status === "RESOLVED") return "Seu atendimento foi concluído.";
+  if (ticket.statusInterno === "closed" || ticket.status === "RESOLVED") return "Atendimento realizado com sucesso!";
   if (ticket.status === "WAITING_CUSTOMER") return "Seu atendimento está aguardando uma resposta.";
   return `Seu atendimento está ${label}.`;
 }
@@ -4214,18 +4815,21 @@ function isValidBrazilianPhone(value) {
   return digits.length === 10 || digits.length === 11;
 }
 
+// Turno da visita: sempre a partir da hora que a equipe agendou no SGP (nunca da preferência do cliente, que
+// aparece à parte como "Horário preferencial"). Mesma regra do push (server/src/support/preferredPeriod.ts).
+function shiftFromTime(start) {
+  if (!start || start === "00:00") return "";
+  const hour = Number(start.slice(0, 2));
+  if (hour < 12) return "Manhã";
+  if (hour < 18) return "Tarde";
+  return "Noite";
+}
+
 function formatAppointmentSchedule(appointment) {
-  if (!appointment?.date) return undefined;
-
-  const date = formatDate(appointment.date);
+  const date = appointment?.date ? formatDate(appointment.date) : "";
   if (!date) return undefined;
-
-  const start = formatClockTime(appointment.windowStart);
-  const end = formatClockTime(appointment.windowEnd);
-
-  if (start && end) return `${date}, das ${start} às ${end}`;
-  if (start) return `${date}, às ${start}`;
-  return `${date}, horário a confirmar`;
+  const shift = shiftFromTime(formatClockTime(appointment.windowStart));
+  return shift ? `${date} · Horário agendado: ${shift}` : `${date} · Horário a confirmar`;
 }
 
 function formatClockTime(value) {
@@ -4233,6 +4837,12 @@ function formatClockTime(value) {
   const match = String(value).match(/(?:^|T)(\d{1,2}):(\d{2})/);
   if (!match) return "";
   return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
+/** Abertura do chamado: sem hora conhecida o SGP vem como 00:00 -- mostra só a data em vez de "00:00". */
+function formatTicketOpenedAt(value) {
+  if (typeof value === "string" && /T00:00(:00)?$/.test(value)) return formatDate(value.slice(0, 10));
+  return formatDateTime(value);
 }
 
 function formatDateTime(value) {
@@ -4521,7 +5131,8 @@ function normalizeTicketVisit(ticket, fallbackContractId) {
     title: source.title || "Atendimento",
     createdAt: source.createdAt || source.openedAt,
     updatedAt: source.updatedAt,
-    appointment: source.appointment
+    appointment: source.appointment,
+    preferredPeriod: source.preferredPeriod
   };
 }
 

@@ -116,6 +116,119 @@ export async function migrateMysql(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS rate_limit_counters (
+      rl_key VARCHAR(191) PRIMARY KEY,
+      hits INT NOT NULL DEFAULT 0,
+      window_started_at VARCHAR(32) NOT NULL,
+      blocked_until VARCHAR(32)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // token_hash (SHA-256 do token) e a chave UNIQUE: o indice de um token de ate 4096 chars estouraria o limite do InnoDB.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_devices (
+      id VARCHAR(64) PRIMARY KEY,
+      customer_id VARCHAR(191) NOT NULL,
+      token TEXT NOT NULL,
+      token_hash CHAR(64) NOT NULL UNIQUE,
+      platform VARCHAR(16) NOT NULL,
+      app_version VARCHAR(64),
+      contract_ids TEXT NOT NULL,
+      created_at VARCHAR(32) NOT NULL,
+      updated_at VARCHAR(32) NOT NULL,
+      last_seen_at VARCHAR(32) NOT NULL,
+      disabled_at VARCHAR(32),
+      INDEX idx_push_devices_customer (customer_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_appointment_state (
+      customer_id VARCHAR(191) NOT NULL,
+      ticket_protocol VARCHAR(64) NOT NULL,
+      appointment_key VARCHAR(32) NOT NULL,
+      notified_at VARCHAR(32) NOT NULL,
+      PRIMARY KEY (customer_id, ticket_protocol)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_billing_state (
+      customer_id VARCHAR(191) NOT NULL,
+      invoice_id VARCHAR(128) NOT NULL,
+      stage INT NOT NULL,
+      notified_at VARCHAR(32) NOT NULL,
+      PRIMARY KEY (customer_id, invoice_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ticket_ratings (
+      id VARCHAR(36) PRIMARY KEY,
+      customer_id VARCHAR(191) NOT NULL,
+      contract_id VARCHAR(64) NOT NULL,
+      protocol VARCHAR(64) NOT NULL,
+      ticket_title VARCHAR(255) NOT NULL,
+      technician VARCHAR(160) NULL,
+      due_at VARCHAR(32) NOT NULL,
+      pushed_at VARCHAR(32) NULL,
+      answered_at VARCHAR(32) NULL,
+      rating TINYINT NULL,
+      comment VARCHAR(1000) NULL,
+      created_at VARCHAR(32) NOT NULL,
+      UNIQUE KEY uq_ticket_ratings_ticket (customer_id, protocol),
+      INDEX idx_ticket_ratings_created (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS location_requests (
+      id VARCHAR(36) PRIMARY KEY,
+      customer_id VARCHAR(191) NOT NULL,
+      contract_id VARCHAR(64) NOT NULL,
+      protocol VARCHAR(64) NOT NULL,
+      latitude DECIMAL(10,7) NOT NULL,
+      longitude DECIMAL(10,7) NOT NULL,
+      accuracy_m DECIMAL(10,2) NULL,
+      source VARCHAR(8) NOT NULL,
+      status VARCHAR(16) NOT NULL,
+      created_at VARCHAR(32) NOT NULL,
+      reviewed_at VARCHAR(32) NULL,
+      reviewed_by VARCHAR(191) NULL,
+      review_note VARCHAR(500) NULL,
+      sgp_posted_at VARCHAR(32) NULL,
+      INDEX idx_location_requests_status (status, created_at),
+      INDEX idx_location_requests_customer (customer_id, contract_id, protocol)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_crashes (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      signature VARCHAR(64) NOT NULL,
+      kind VARCHAR(16) NOT NULL,
+      title VARCHAR(300) NOT NULL,
+      stack TEXT NOT NULL,
+      app_version VARCHAR(32) NOT NULL,
+      device_id VARCHAR(64) NOT NULL,
+      device_model VARCHAR(100) NOT NULL,
+      android_version VARCHAR(32) NOT NULL,
+      created_at VARCHAR(32) NOT NULL,
+      INDEX idx_app_crashes_signature (signature),
+      INDEX idx_app_crashes_created (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_crash_status (
+      signature VARCHAR(64) PRIMARY KEY,
+      status VARCHAR(20) NOT NULL,
+      admin_notes TEXT NULL,
+      updated_at VARCHAR(32) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS admin_users (
       id VARCHAR(191) PRIMARY KEY,
       email VARCHAR(255) NOT NULL UNIQUE,

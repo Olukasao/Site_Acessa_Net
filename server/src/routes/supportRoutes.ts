@@ -1,3 +1,4 @@
+import { OBSERVATION_MAX_LENGTH, preferredPeriods } from "../support/preferredPeriod.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { diagnosisCategoryIds } from "../types.js";
@@ -5,6 +6,30 @@ import type { AppContainer } from "../container.js";
 import { requireAuth } from "../auth/authenticate.js";
 import { normalizeBrazilianPhone } from "../auth/cpf.js";
 import { parseBody, parseParams } from "./validation.js";
+import { DOCUMENT_DESCRIPTION_MAX_LENGTH, DOCUMENT_MAX_FILES, DOCUMENT_MAX_FILE_BYTES } from "../support/documentsService.js";
+
+/** Arquivos vao em base64 no JSON (+33%) -- teto = limite de arquivos * tamanho maximo * 4/3, mais folga. */
+const DOCUMENTS_BODY_LIMIT = Math.ceil((DOCUMENT_MAX_FILES * DOCUMENT_MAX_FILE_BYTES * 4) / 3) + 64 * 1024;
+
+const documentsSchema = z.object({
+  contractId: z.string().min(1),
+  contactPhone: z
+    .string()
+    .trim()
+    .min(1)
+    .max(32)
+    .refine((value) => Boolean(normalizeBrazilianPhone(value)), "Informe um telefone brasileiro valido."),
+  description: z.string().max(DOCUMENT_DESCRIPTION_MAX_LENGTH).optional(),
+  files: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(200),
+        contentBase64: z.string().min(1).max(Math.ceil((DOCUMENT_MAX_FILE_BYTES * 4) / 3) + 8)
+      })
+    )
+    .min(1)
+    .max(DOCUMENT_MAX_FILES)
+});
 
 const idParams = z.object({
   id: z.string().min(1)
@@ -19,6 +44,9 @@ const diagnosisSchema = z.object({
 const createTicketSchema = z.object({
   contractId: z.string().min(1),
   diagnosisId: z.string().min(1),
+  preferredPeriod: z.enum(preferredPeriods),
+  /** Recado opcional do cliente para a equipe (ex.: nao estara em casa em tal horario). */
+  observation: z.string().max(OBSERVATION_MAX_LENGTH * 2).optional(),
   contactPhone: z
     .string()
     .trim()
@@ -59,7 +87,9 @@ export async function registerSupportRoutes(app: FastifyInstance, container: App
       customerId: auth.customerId,
       contractId: body.contractId,
       diagnosisId: body.diagnosisId,
-      contactPhone: body.contactPhone
+      contactPhone: body.contactPhone,
+      ...(body.preferredPeriod ? { preferredPeriod: body.preferredPeriod } : {}),
+      ...(body.observation ? { observation: body.observation } : {})
     });
     await container.centralActivityService.safeRecordAuthenticated({
       auth,
@@ -70,6 +100,27 @@ export async function registerSupportRoutes(app: FastifyInstance, container: App
       metadata: { ticketId: ticket.id, protocol: ticket.protocol, title: ticket.title }
     });
     return ticket;
+  });
+
+  app.post("/v1/support/documents", { bodyLimit: DOCUMENTS_BODY_LIMIT }, async (request) => {
+    const auth = requireAuth(request);
+    const body = parseBody(documentsSchema, request.body);
+    const result = await container.documentsService.submit({
+      customerId: auth.customerId,
+      contractId: body.contractId,
+      contactPhone: body.contactPhone,
+      description: body.description,
+      files: body.files
+    });
+    await container.centralActivityService.safeRecordAuthenticated({
+      auth,
+      request,
+      eventType: "OPEN_TICKET",
+      page: "atendimento",
+      contractId: body.contractId,
+      metadata: { action: "DOCUMENTS", protocol: result.protocol, sent: result.sent, failed: result.failed.length }
+    });
+    return result;
   });
 
   app.get("/v1/support/tickets", async (request) => {

@@ -35,8 +35,9 @@ cd $REMOTE_APP_DIR
 set -a; . ./.env; set +a
 if [ "\${DB_DRIVER:-sqlite}" = "mysql" ]; then
   mkdir -p data/backups && umask 077
-  mysqldump --single-transaction --quick --routines --no-tablespaces \
-    -h "\$MYSQL_HOST" -P "\${MYSQL_PORT:-3306}" -u "\$MYSQL_USER" -p"\$MYSQL_PASSWORD" "\$MYSQL_DATABASE" 2>/dev/null \
+  # Senha via ambiente (MYSQL_PWD), nunca em -p na linha de comando: argumentos aparecem no ps de qualquer usuario.
+  MYSQL_PWD="\$MYSQL_PASSWORD" mysqldump --single-transaction --quick --routines --no-tablespaces \
+    -h "\$MYSQL_HOST" -P "\${MYSQL_PORT:-3306}" -u "\$MYSQL_USER" "\$MYSQL_DATABASE" 2>/dev/null \
     | gzip > data/backups/mysql-$TS.sql.gz
   gzip -t data/backups/mysql-$TS.sql.gz
   zcat data/backups/mysql-$TS.sql.gz | tail -1 | grep -q "Dump completed"

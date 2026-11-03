@@ -1433,3 +1433,47 @@
 .cliente-app .plano-compare-card.is-recommended .home-btn-text:hover {
   color: var(--white);
 }
+
+
+/* ---------- Horário preferencial de atendimento (abrir chamado) ---------- */
+.cliente-app .cliente-period-field {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+}
+.cliente-app .cliente-period-field legend {
+  padding: 0;
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-weight: 700;
+}
+.cliente-app .cliente-period-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.cliente-app .cliente-period-option {
+  display: grid;
+  gap: 2px;
+  min-height: 64px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--ink);
+  background: var(--white);
+  text-align: left;
+  cursor: pointer;
+}
+.cliente-app .cliente-period-option strong { font-size: 1rem; }
+.cliente-app .cliente-period-option small { color: var(--ink-3); font-size: 0.82rem; }
+.cliente-app .cliente-period-option.is-selected {
+  border-color: var(--blue-500);
+  background: rgba(47, 107, 255, 0.08);
+  box-shadow: 0 0 0 2px rgba(47, 107, 255, 0.25);
+}
+.cliente-app .cliente-period-option:focus-visible { outline: 3px solid var(--blue-400, #6aa0ff); outline-offset: 2px; }
+.cliente-app .cliente-period-note { color: var(--ink-3); font-size: 0.85rem; }
+
+.cliente-app .cliente-required { color: var(--ink-3); font-size: 0.82rem; font-weight: 600; }

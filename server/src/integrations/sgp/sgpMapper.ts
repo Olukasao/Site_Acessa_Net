@@ -1,19 +1,44 @@
+import { logAppointmentSource } from "./appointmentSourceLog.js";
+import { parsePreferredPeriodLabel } from "../../support/preferredPeriod.js";
 import type { ContractSummary, PublicTicketVisit, TicketStatus, TicketSummary } from "../../types.js";
 import type { SgpContractRaw, SgpOccurrenceRaw } from "./sgpClient.js";
-import { sha256 } from "../../security/hash.js";
+import { hmacSha256, sha256 } from "../../security/hash.js";
 import { mapSgpStatus, normalizeChamadoStatus } from "./statusMapper.js";
 
 /** Alguns campos de ocorrencia trazem ordens de servico aninhadas -- nao e uma chamada SGP separada. */
 type SgpServiceOrderRaw = Record<string, unknown>;
 
-export function mapSgpCustomer(documento: string, contracts: SgpContractRaw[]) {
+/**
+ * customerId LEGADO: SHA-256 puro do CPF. Como o CPF tem espaco de busca pequeno, o id (que vai no JWT, nas
+ * sessoes e nos logs) permitia recuperar o CPF por forca bruta offline. Mantido para (a) continuar reconhecendo
+ * sessoes/contratos emitidos antes da migracao e (b) o modo padrao enquanto CUSTOMER_ID_HMAC nao for ligado.
+ */
+export function legacyCustomerId(normalizedDocument: string) {
+  return `customer_sgp_${sha256(normalizedDocument).slice(0, 16)}`;
+}
+
+/** customerId novo: HMAC-SHA256 com segredo do servidor (prefixo diferente: nunca colide com o legado). */
+export function hmacCustomerId(normalizedDocument: string, secret: string) {
+  return `customer_h1_${hmacSha256(`customer-id:${normalizedDocument}`, secret).slice(0, 24)}`;
+}
+
+export interface CustomerIdOptions {
+  /** Com segredo informado, o id do cliente e derivado por HMAC (CUSTOMER_ID_HMAC=1). Sem segredo = legado. */
+  hmacSecret?: string | undefined;
+}
+
+export function deriveCustomerId(normalizedDocument: string, options?: CustomerIdOptions) {
+  return options?.hmacSecret ? hmacCustomerId(normalizedDocument, options.hmacSecret) : legacyCustomerId(normalizedDocument);
+}
+
+export function mapSgpCustomer(documento: string, contracts: SgpContractRaw[], idOptions?: CustomerIdOptions) {
   const firstContract = contracts[0];
   if (!firstContract) {
     return null;
   }
 
   const normalizedDocument = documento.replace(/\D/g, "");
-  const customerId = `customer_sgp_${sha256(normalizedDocument).slice(0, 16)}`;
+  const customerId = deriveCustomerId(normalizedDocument, idOptions);
   const customerName = pickString(firstContract, [
     "cliente",
     "cliente_nome",
@@ -353,16 +378,21 @@ export function mapSgpOccurrence(raw: SgpOccurrenceRaw, contractId: string): Tic
 
   const status = mapSgpStatus(String(pickString(raw, ["status"]) || ""));
   const openedAt = pickString(raw, ["data_cadastro", "data"]) || new Date().toISOString().slice(0, 10);
-  const openedTime = pickString(raw, ["hora_cadastro", "hora"]) || "00:00";
+  const openedTime = normalizeClock(pickString(raw, ["hora_cadastro", "hora"])) || openingTimeFromProtocol(numero, openedAt) || "00:00";
 
   const ordensServicos = Array.isArray((raw as Record<string, unknown>).ordens_servicos)
     ? ((raw as Record<string, unknown>).ordens_servicos as SgpServiceOrderRaw[])
     : [];
 
   const primaryOs = ordensServicos[0];
-  const osStatus = primaryOs ? mapSgpStatus(String(pickString(primaryOs, ["status"]) || "")) : undefined;
-  const appointmentDate = pickString(raw, ["data_agendamento", "data"]) || pickString(primaryOs ?? {}, ["data_agendamento", "data"]) || "";
-  const appointmentStart = pickString(raw, ["hora_agendamento", "hora"]) || pickString(primaryOs ?? {}, ["hora_agendamento", "hora"]) || extractTimeFromContent(raw) || "";
+  const schedule = resolveAppointmentSchedule(raw, ordensServicos);
+  const statusOs = schedule?.os ?? primaryOs;
+  const osStatus = statusOs ? mapSgpStatus(String(pickString(statusOs, ["status"]) || "")) : undefined;
+  const appointmentDate = schedule?.date ?? "";
+  // Horario so de campo de agendamento do SGP. Sem hora no SGP: "horario a confirmar" (nunca uma hora achada no texto
+  // livre -- o texto traz, por exemplo, a "Ultima leitura" do diagnostico, que virava horario de visita).
+  const appointmentStart = schedule?.time ?? "";
+  if (schedule) logAppointmentSource(numero, schedule.date, schedule.time, schedule.source);
   const finalStatus = applyAppointmentStatus(osStatus ?? status, appointmentDate);
   const normalized = normalizeChamadoStatus(finalStatus);
 
@@ -394,6 +424,22 @@ export function mapSgpOccurrence(raw: SgpOccurrenceRaw, contractId: string): Tic
   };
 }
 
+/**
+ * Tecnico responsavel pela OS, pelos mesmos campos que a Agenda de Tecnicos le do SGP ("responsavel" /
+ * "os_tecnico_responsavel": nome quando preenchido, senao username). Vazio quando o SGP nao informa.
+ */
+export function extractTechnicianName(raw: SgpOccurrenceRaw): string | undefined {
+  const orders = Array.isArray((raw as Record<string, unknown>).ordens_servicos)
+    ? ((raw as Record<string, unknown>).ordens_servicos as SgpServiceOrderRaw[])
+    : [];
+  for (const os of orders) {
+    const name = pickString(os, ["responsavel", "os_tecnico_responsavel", "tecnico_nome", "tecnico"]);
+    const clean = name.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+    if (clean) return clean;
+  }
+  return undefined;
+}
+
 export function mapSgpOsToCustomerVisit(raw: SgpOccurrenceRaw, contractId: string): PublicTicketVisit | null {
   const numero = String(pickString(raw, ["numero", "ocorrencia", "protocolo"]) || "");
   if (!numero) {
@@ -402,16 +448,21 @@ export function mapSgpOsToCustomerVisit(raw: SgpOccurrenceRaw, contractId: strin
 
   const status = mapSgpStatus(String(pickString(raw, ["status"]) || ""));
   const openedAt = pickString(raw, ["data_cadastro", "data"]) || new Date().toISOString().slice(0, 10);
-  const openedTime = pickString(raw, ["hora_cadastro", "hora"]) || "00:00";
+  const openedTime = normalizeClock(pickString(raw, ["hora_cadastro", "hora"])) || openingTimeFromProtocol(numero, openedAt) || "00:00";
 
   const ordensServicos = Array.isArray((raw as Record<string, unknown>).ordens_servicos)
     ? ((raw as Record<string, unknown>).ordens_servicos as SgpServiceOrderRaw[])
     : [];
 
   const primaryOs = ordensServicos[0];
-  const osStatus = primaryOs ? mapSgpStatus(String(pickString(primaryOs, ["status"]) || "")) : undefined;
-  const appointmentDate = pickString(raw, ["data_agendamento", "data"]) || pickString(primaryOs ?? {}, ["data_agendamento", "data"]) || "";
-  const appointmentStart = pickString(raw, ["hora_agendamento", "hora"]) || pickString(primaryOs ?? {}, ["hora_agendamento", "hora"]) || extractTimeFromContent(raw) || "";
+  const schedule = resolveAppointmentSchedule(raw, ordensServicos);
+  const statusOs = schedule?.os ?? primaryOs;
+  const osStatus = statusOs ? mapSgpStatus(String(pickString(statusOs, ["status"]) || "")) : undefined;
+  const appointmentDate = schedule?.date ?? "";
+  // Horario so de campo de agendamento do SGP. Sem hora no SGP: "horario a confirmar" (nunca uma hora achada no texto
+  // livre -- o texto traz, por exemplo, a "Ultima leitura" do diagnostico, que virava horario de visita).
+  const appointmentStart = schedule?.time ?? "";
+  if (schedule) logAppointmentSource(numero, schedule.date, schedule.time, schedule.source);
   const finalStatus = applyAppointmentStatus(osStatus ?? status, appointmentDate);
   const normalized = normalizeChamadoStatus(finalStatus);
 
@@ -455,8 +506,13 @@ export function mapSgpOsToCustomerVisit(raw: SgpOccurrenceRaw, contractId: strin
   const closureReason = normalized.status === "closed" ? pickString(raw, ["conteudo"]) : "";
 
   const withClosureReason = closureReason ? { ...base, closureReason } : base;
+  const preferredPeriod =
+    normalized.status !== "closed"
+      ? parsePreferredPeriodLabel(`${pickString(raw, ["conteudo", "descricao", "observacao"]) || ""} ${ordensServicos.map((os) => pickString(os, ["conteudo", "descricao", "observacao"]) || "").join(" ")}`)
+      : undefined;
   const connectionStatus = extractConnectionStatus(raw);
-  return connectionStatus ? { ...withClosureReason, connectionStatus } : withClosureReason;
+  const withPeriod = preferredPeriod ? { ...withClosureReason, preferredPeriod } : withClosureReason;
+  return connectionStatus ? { ...withPeriod, connectionStatus } : withPeriod;
 }
 
 export function extractConnectionStatus(raw: SgpOccurrenceRaw): "ONLINE" | "OFFLINE" | undefined {
@@ -520,21 +576,84 @@ function normalizeDiagnosticText(value: string) {
     .toLowerCase();
 }
 
-function extractTimeFromContent(raw: SgpOccurrenceRaw): string {
-  const content = String(pickString(raw, ["conteudo", "descricao", "observacao"]) || "");
-  const osContent = Array.isArray((raw as Record<string, unknown>).ordens_servicos)
-    ? ((raw as Record<string, unknown>).ordens_servicos as SgpServiceOrderRaw[])[0]
-    : undefined;
+/**
+ * Horario real da visita no SGP. Fontes, da mais especifica para a mais geral:
+ *  1) as ordens de servico da ocorrencia (campo "os_data_agendamento", "AAAA-MM-DD HH:MM:SS", que e o que a
+ *     agenda de tecnicos grava ao reagendar; ou "data_agendamento"/"hora_agendamento"), escolhendo a OS aberta com o
+ *     agendamento mais adiante (reagendar nao pode ficar preso na primeira OS da lista);
+ *  2) a propria ocorrencia ("data_agendamento"/"hora_agendamento").
+ * NUNCA usa "data"/"hora" da ocorrencia: sao a data e a hora de ABERTURA, e tratavam a abertura como agendamento,
+ * o que congelava o primeiro horario para sempre.
+ */
+const SCHEDULE_DATETIME_FIELDS = ["os_data_agendamento", "data_agendamento", "data_hora_agendamento", "data_agendada", "agendamento"];
+const SCHEDULE_TIME_FIELDS = ["os_hora_agendamento", "hora_agendamento", "hora_agendada"];
 
-  const osContentText = osContent ? String(pickString(osContent, ["conteudo", "descricao", "observacao"]) || "") : "";
-  const combined = `${osContentText} ${content}`;
+/**
+ * A lista de ocorrencias traz "data_cadastro" sem hora. O protocolo do SGP e AAMMDDHHMMSS (ex.: 261030085200 =
+ * 30/10/26 08:52), entao a hora de abertura sai dele -- so quando a data do protocolo bate com a data de cadastro.
+ */
+export function openingTimeFromProtocol(protocol: string, openedDate: string): string {
+  const match = /^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\d{2}$/.exec(protocol);
+  if (!match) return "";
+  const [, yy, mm, dd, hh, mi] = match;
+  if (`20${yy}-${mm}-${dd}` !== openedDate.slice(0, 10) || Number(hh) > 23 || Number(mi) > 59) return "";
+  return `${hh}:${mi}`;
+}
 
-  const match = combined.match(/(\d{1,2}:\d{2})(?::\d{2})?/);
-  if (!match || !match[1]) {
-    return "";
+function normalizeClock(value: string): string {
+  const match = value.match(/(\d{1,2}):(\d{2})/);
+  return match ? `${match[1]!.padStart(2, "0")}:${match[2]}` : "";
+}
+
+function parseScheduleValue(value: string): { date: string; time: string } | undefined {
+  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}:\d{2}))?/);
+  if (iso) {
+    return { date: `${iso[1]}-${iso[2]}-${iso[3]}`, time: iso[4] ? normalizeClock(iso[4]) : "" };
+  }
+  const br = value.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T,]+(\d{1,2}:\d{2}))?/);
+  if (br) {
+    return { date: `${br[3]}-${br[2]}-${br[1]}`, time: br[4] ? normalizeClock(br[4]) : "" };
+  }
+  return undefined;
+}
+
+function readSchedule(record: Record<string, unknown>): { date: string; time: string; source: string } | undefined {
+  for (const field of SCHEDULE_DATETIME_FIELDS) {
+    const value = pickString(record, [field]);
+    const parsed = value ? parseScheduleValue(value) : undefined;
+    if (!parsed) continue;
+    if (parsed.time) return { date: parsed.date, time: parsed.time, source: field };
+    const timeField = SCHEDULE_TIME_FIELDS.find((name) => normalizeClock(pickString(record, [name])));
+    return timeField
+      ? { date: parsed.date, time: normalizeClock(pickString(record, [timeField])), source: `${field}+${timeField}` }
+      : { date: parsed.date, time: "", source: `${field} (sem hora)` };
+  }
+  return undefined;
+}
+
+export function resolveAppointmentSchedule(
+  raw: SgpOccurrenceRaw,
+  ordensServicos: SgpServiceOrderRaw[]
+): { date: string; time: string; source: string; os?: SgpServiceOrderRaw } | undefined {
+  const scheduled = ordensServicos
+    .map((os) => ({
+      os,
+      schedule: readSchedule(os),
+      open: normalizeChamadoStatus(mapSgpStatus(String(pickString(os, ["status"]) || ""))).status !== "closed"
+    }))
+    .filter((item): item is { os: SgpServiceOrderRaw; schedule: { date: string; time: string; source: string }; open: boolean } => Boolean(item.schedule));
+
+  if (scheduled.length > 0) {
+    const pool = scheduled.some((item) => item.open) ? scheduled.filter((item) => item.open) : scheduled;
+    const best = pool.reduce((latest, item) =>
+      `${item.schedule.date} ${item.schedule.time}` > `${latest.schedule.date} ${latest.schedule.time}` ? item : latest
+    );
+    const osId = pickString(best.os, ["id", "os_id"]);
+    return { ...best.schedule, source: `OS ${osId || "?"}: ${best.schedule.source}`, os: best.os };
   }
 
-  return match[1];
+  const own = readSchedule(raw);
+  return own ? { ...own, source: `ocorrencia: ${own.source}` } : undefined;
 }
 
 function applyAppointmentStatus(status: TicketStatus, appointmentDate: string): TicketStatus {

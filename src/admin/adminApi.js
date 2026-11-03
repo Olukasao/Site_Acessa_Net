@@ -243,13 +243,47 @@ export async function listChamados(params) {
   return adminRequest(`/admin/api/chamados${buildQuery(params)}`);
 }
 
-export async function getChamadoDetail(protocol) {
-  return adminRequest(`/admin/api/chamados/${encodeURIComponent(protocol)}`);
+export async function listAppCrashes(params) {
+  return adminRequest(`/admin/api/erros-app${buildQuery(params)}`);
 }
 
-/** Busca clientes direto na OLT Cloud (nome, documento, pppoe ou contrato) -- ver server/src/routes/adminOltCloudRoutes.ts. Documento sempre mascarado na resposta, nunca pppoe_password. */
-export async function searchOltClients(params) {
-  return adminRequest(`/admin/api/oltcloud/clients${buildQuery(params)}`);
+export async function getAppCrash(signature) {
+  return adminRequest(`/admin/api/erros-app/${encodeURIComponent(signature)}`);
+}
+
+export async function updateAppCrash(signature, input) {
+  return adminRequest(`/admin/api/erros-app/${encodeURIComponent(signature)}`, { method: "PATCH", body: input });
+}
+
+export async function listRatings(params) {
+  return adminRequest(`/admin/api/avaliacoes${buildQuery(params)}`);
+}
+
+/** Apaga uma avaliação (só admin). Sem volta; o servidor registra o que foi apagado na auditoria. */
+export async function deleteRating(id) {
+  return adminRequest(`/admin/api/avaliacoes/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** Apaga todas as avaliações (respondidas e pendentes) de um contrato, ex.: o de teste. Só admin. */
+export async function deleteContractRatings(contractId) {
+  return adminRequest(`/admin/api/avaliacoes/contrato/${encodeURIComponent(contractId)}`, { method: "DELETE" });
+}
+
+export async function listLocations(params) {
+  return adminRequest(`/admin/api/localizacoes${buildQuery(params)}`);
+}
+
+/** Aprova e grava o link do mapa na OS do SGP. */
+export async function approveLocation(id) {
+  return adminRequest(`/admin/api/localizacoes/${encodeURIComponent(id)}/aprovar`, { method: "POST" });
+}
+
+export async function rejectLocation(id, note) {
+  return adminRequest(`/admin/api/localizacoes/${encodeURIComponent(id)}/recusar`, { method: "POST", body: { note } });
+}
+
+export async function getChamadoDetail(protocol) {
+  return adminRequest(`/admin/api/chamados/${encodeURIComponent(protocol)}`);
 }
 
 /** Tira da lista de Marketing (source: "wifi" | "contrato"). Nao apaga cadastro nem pedido. */
@@ -306,8 +340,8 @@ export async function updateJobApplication(id, input) {
   });
 }
 
-/** Baixa o arquivo do currículo (binário, por isso fora do adminRequest, que espera JSON). */
-export async function downloadJobApplicationFile(id, retryOnUnauthorized = true) {
+/** Busca o arquivo do currículo para exibir na página (binário, por isso fora do adminRequest, que espera JSON). */
+export async function fetchJobApplicationFile(id, retryOnUnauthorized = true) {
   const { accessToken } = readAdminTokens();
   let response;
   try {
@@ -323,7 +357,7 @@ export async function downloadJobApplicationFile(id, retryOnUnauthorized = true)
   if (response.status === 401 && retryOnUnauthorized) {
     const nextToken = await refreshAdminAccessToken();
     if (nextToken) {
-      return downloadJobApplicationFile(id, false);
+      return fetchJobApplicationFile(id, false);
     }
   }
 
