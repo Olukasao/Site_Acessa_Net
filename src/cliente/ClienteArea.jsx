@@ -1962,24 +1962,18 @@ function HomeHeader({ alertCount, customer, onRefresh, refreshing }) {
 }
 
 // Sem selo "Online/Offline" no Início: o SGP não informa a sessão de conexão do cliente e a OLT não é confiável o
-// bastante para isso (contrato ativo nunca é "online"). Só o contrato encerrado/suspenso aparece, porque vem do SGP.
+// bastante para isso (contrato ativo nunca é "online"). O selo "Serviço encerrado" foi removido a pedido do
+// usuário em 04/11 -- gerava confusão quando aparecia num contrato que, pro cliente, ainda estava ativo.
 function ConnectionHeroCard({ contract, offline }) {
-  const ended = isServiceEnded(contract);
   const speed = parsePlanSpeed(contract?.planName);
 
   return (
-    <section className={`home-card home-connection-card tone-${ended ? "slate" : "blue"} ${offline ? "is-offline" : ""}`}>
+    <section className={`home-card home-connection-card tone-blue ${offline ? "is-offline" : ""}`}>
       <div className="home-connection-top">
         <span className="home-card-eyebrow home-card-eyebrow-onlight">
           <Wifi size={16} />
           Sua internet
         </span>
-        {ended ? (
-          <span className="home-status-chip">
-            <span className="home-status-dot" />
-            Serviço encerrado
-          </span>
-        ) : null}
       </div>
 
       <strong className="home-connection-plan">
@@ -4877,7 +4871,6 @@ function isServiceEnded(contract) {
 }
 
 function connectionLabel(connection, contract) {
-  if (isServiceEnded(contract)) return "Serviço encerrado";
   if (!connection) return "Indisponível";
   if (isOfflineConnection(connection, contract)) return "Offline";
   if (connection.health === "NORMAL") return "Online";
@@ -4892,11 +4885,6 @@ function connectionLabel(connection, contract) {
 }
 
 function connectionDetail(connection, contract) {
-  if (isServiceEnded(contract)) {
-    return contract?.status === "SUSPENDED"
-      ? "Este contrato está suspenso -- nenhuma informação de conexão é exibida."
-      : "Este contrato foi cancelado -- nenhuma informação de conexão é exibida.";
-  }
   if (!connection) return "Dados de conexão não carregados";
   if (connection.knownIncident) return "Há um incidente conhecido na região";
   if (connection.onu === "OFFLINE" || connection.pppoe === "OFFLINE") return "Equipamento ou autenticação offline";
@@ -4907,8 +4895,7 @@ function connectionDetail(connection, contract) {
   return "Verifique os detalhes técnicos";
 }
 
-function connectionTone(connection, contract) {
-  if (isServiceEnded(contract)) return "slate";
+function connectionTone(connection) {
   if (!connection) return "blue";
   if (connection.health === "NORMAL") return "green";
   if (connection.health === "CRITICAL") return "red";
