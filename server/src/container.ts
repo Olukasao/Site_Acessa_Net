@@ -401,7 +401,7 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     marketingStats = new MarketingStatsRepository(async (sql, params) => db.prepare(sql).all(...params) as Array<Record<string, unknown>>);
   }
 
-  const mailer: Mailer = config.smtp.enabled ? new SmtpMailer(config.smtp) : new UnconfiguredMailer();
+  const mailer: Mailer = config.smtp.enabled ? new SmtpMailer(config.smtp, (entry) => console.warn(`[smtp] ${JSON.stringify(entry)}`)) : new UnconfiguredMailer();
 
   if (!sgpClient) {
     throw new Error(
