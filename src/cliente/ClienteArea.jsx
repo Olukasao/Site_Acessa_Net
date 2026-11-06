@@ -88,7 +88,7 @@ import {
 import NoticeBanner from "./central/NoticeBanner";
 import VisitLocationCard from "./central/VisitLocationCard";
 import ToastHost, { showToast } from "./central/Toast";
-import { LocationCaptureField, submitLocation } from "./central/locationCapture";
+import { LocationCaptureField, isNativeApp, submitLocation } from "./central/locationCapture";
 import NetworkIncidentBanner from "./central/NetworkIncidentBanner";
 import NoticeCard from "./central/NoticeCard";
 import NoticeModal from "./central/NoticeModal";
@@ -3066,7 +3066,11 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
           diagnosisId: diagnosis.diagnosisId,
           contactPhone,
           preferredPeriod,
-          ...(observation.trim() ? { observation: observation.trim() } : {})
+          ...(observation.trim() ? { observation: observation.trim() } : {}),
+          // O ponto vai junto com o pedido: o servidor o coloca dentro do texto do chamado, como a triagem.
+          ...(locationDraft
+            ? { location: { latitude: locationDraft.latitude, longitude: locationDraft.longitude, accuracyMeters: locationDraft.accuracyMeters, source: isNativeApp() ? "app" : "web" } }
+            : {})
         }
       });
       setCreatedTicket(normalizeTicketVisit(ticket, selectedContract.id));
@@ -3078,11 +3082,13 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
         message: `Protocolo #${ticket?.protocol || ticket?.id}. Nossa equipe já recebeu o seu pedido e vai entrar em contato.`
       });
       if (locationDraft && ticket?.protocol) {
-        // O chamado já foi aberto: se o envio do ponto falhar, o cartão do chamado continua oferecendo o reenvio.
-        try {
-          await submitLocation(selectedContract.id, ticket.protocol, locationDraft);
-        } catch {
-          // sem aviso: nada a desfazer, e o cartão do chamado mostra "Enviar localização da minha casa"
+        // Se o link não entrou no texto do chamado (servidor antigo ou ponto recusado), usa o envio posterior de antes.
+        if (ticket.locationIncluded !== true) {
+          try {
+            await submitLocation(selectedContract.id, ticket.protocol, locationDraft);
+          } catch {
+            // sem aviso: nada a desfazer, e o cartão do chamado mostra "Enviar localização da minha casa"
+          }
         }
         setLocationDraft(null);
       }

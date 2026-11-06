@@ -81,3 +81,13 @@ export function shiftFromTime(time: string | null | undefined): "Manhã" | "Tard
   if (hour < 18) return "Tarde";
   return "Noite";
 }
+
+/** Link do mapa dentro do texto do chamado, logo apos o Contato/observacao (igual ao resto da triagem). */
+export function addLocationLines(description: string, lines: string[]): string {
+  if (!lines.length) return description;
+  const block = lines.join("\n");
+  for (const anchor of [/^Observacao do cliente:.*$/m, /^Hor[aá]rio preferencial de atendimento:.*$/im, /^Contato:.*$/m]) {
+    if (anchor.test(description)) return description.replace(anchor, (found) => `${found}\n${block}`);
+  }
+  return `${description}\n${block}`;
+}

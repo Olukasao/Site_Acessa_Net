@@ -188,3 +188,33 @@ describe("LocationService.approve / reject (reenvio pelo painel)", () => {
     expect(text).toMatch(/^[\x20-\x7E\n]+$/);
   });
 });
+
+describe("localizacao na abertura do chamado", () => {
+  it("monta as linhas do link e valida o ponto", async () => {
+    const { locationLinesForTicket, isUsableLocation } = await import("../src/support/locationService.js");
+    const { addLocationLines } = await import("../src/support/preferredPeriod.js");
+    expect(isUsableLocation(-23.3232, -46.7284, 25)).toBe(true);
+    expect(isUsableLocation(0, 0, 25)).toBe(false);
+    expect(isUsableLocation(-23.3232, -46.7284, 500)).toBe(false);
+    const texto = addLocationLines("DIAGNOSTICO\nContato: (11) 99999-0000\nSolicitacao: x", locationLinesForTicket({ latitude: -23.3232, longitude: -46.7284, accuracyMeters: 25 }));
+    expect(texto).toMatch(/Contato: \(11\) 99999-0000\nLocalizacao da casa confirmada pelo cliente \(precisao de cerca de 25 m\):\nMapa: https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=-23\.323200,-46\.728400\nRota: /);
+    expect(texto.endsWith("Solicitacao: x")).toBe(true);
+  });
+
+  it("recordIncludedInTicket registra como entregue sem escrever no SGP", async () => {
+    const { service, repo, addServiceOrderNote, addOccurrenceComment, addOccurrenceAttachment } = build();
+    await service.recordIncludedInTicket(base);
+    const [item] = await repo.list(undefined, 5);
+    expect(item).toMatchObject({ status: "approved", reviewedBy: "auto" });
+    expect(item!.sgpPostedAt).not.toBeNull();
+    expect(addServiceOrderNote).not.toHaveBeenCalled();
+    expect(addOccurrenceComment).not.toHaveBeenCalled();
+    expect(addOccurrenceAttachment).not.toHaveBeenCalled();
+  });
+
+  it("ponto invalido nao e registrado", async () => {
+    const { service, repo } = build();
+    await service.recordIncludedInTicket({ ...base, latitude: 0, longitude: 0 });
+    expect(await repo.list(undefined, 5)).toHaveLength(0);
+  });
+});

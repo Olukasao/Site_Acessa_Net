@@ -2,7 +2,7 @@ import type { Appointment, DiagnosisCategoryId, PublicTicketVisit, TicketTimelin
 import { AppError } from "../errors.js";
 import { CONTACT_PLACEHOLDER, evaluateDiagnosis, getFastDiagnosisQuestion } from "../diagnosis/engine.js";
 import { supportCategories } from "../diagnosis/categories.js";
-import { addObservationLine, addPreferredPeriodLine, preferredPeriodLabel, type PreferredPeriod } from "./preferredPeriod.js";
+import { addLocationLines, addObservationLine, addPreferredPeriodLine, preferredPeriodLabel, type PreferredPeriod } from "./preferredPeriod.js";
 import type { AppointmentProvider, BillingProvider, NetworkProvider, TicketProvider } from "../integrations/sgp/providers.js";
 import { mapSgpStatus, normalizeChamadoStatus } from "../integrations/sgp/statusMapper.js";
 import { mapSgpOsToCustomerVisit } from "../integrations/sgp/sgpMapper.js";
@@ -11,6 +11,7 @@ import { randomId } from "../security/hash.js";
 import { OwnershipService } from "../security/ownership.js";
 import type { TicketSummaryWithRaw } from "../integrations/sgp/providers.js";
 import type { SgpUraClient } from "../integrations/sgp/sgpClient.js";
+import { isUsableLocation, locationLinesForTicket } from "./locationService.js";
 import { formatBrazilianPhone, normalizeBrazilianPhone } from "../auth/cpf.js";
 
 /** Chamado fechado some do historico (listTickets) depois desses dias, contando do fechamento -- nao afeta chamado ainda ativo. */
@@ -128,6 +129,8 @@ export class SupportService {
     contactPhone: string;
     preferredPeriod?: PreferredPeriod;
     observation?: string;
+    /** Ponto da casa confirmado pelo cliente na abertura: vai no texto do chamado, como a triagem. Invalido e ignorado. */
+    location?: { latitude: number; longitude: number; accuracyMeters?: number | undefined };
   }) {
     const contract = await this.ownership.assertContract(input.customerId, input.contractId);
     const diagnosis = this.ownership.assertDiagnosis(input.customerId, input.diagnosisId);
@@ -167,9 +170,13 @@ export class SupportService {
         Boolean(diagnosis.answers.offline_initial_option);
       const ticketTitle = isAutomaticOfflineTicket ? "CLIENTE OFFLINE" : category?.title ?? "Suporte";
       const descriptionWithPhone = insertContactPhone(diagnosis.result.structuredDescription, contactPhone);
-      const ticketDescription = addObservationLine(
-        input.preferredPeriod ? addPreferredPeriodLine(descriptionWithPhone, input.preferredPeriod) : descriptionWithPhone,
-        input.observation
+      const locationIncluded = Boolean(input.location && isUsableLocation(input.location.latitude, input.location.longitude, input.location.accuracyMeters));
+      const ticketDescription = addLocationLines(
+        addObservationLine(
+          input.preferredPeriod ? addPreferredPeriodLine(descriptionWithPhone, input.preferredPeriod) : descriptionWithPhone,
+          input.observation
+        ),
+        locationIncluded && input.location ? locationLinesForTicket(input.location) : []
       );
       const customer = this.store.getCustomer(input.customerId);
 

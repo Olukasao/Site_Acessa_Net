@@ -24,6 +24,25 @@ export interface SubmitLocationInput {
   source: LocationSource;
 }
 
+/** Ponto valido para achar uma casa: dentro do Brasil e com precisao aceitavel. */
+export function isUsableLocation(latitude: number, longitude: number, accuracyMeters?: number | undefined) {
+  return (
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude >= BRAZIL.minLat &&
+    latitude <= BRAZIL.maxLat &&
+    longitude >= BRAZIL.minLng &&
+    longitude <= BRAZIL.maxLng &&
+    (accuracyMeters === undefined || accuracyMeters <= MAX_ACCURACY_METERS)
+  );
+}
+
+/** Linhas do link do mapa para o texto do chamado aberto pelo cliente (sem acento, como o resto da triagem). */
+export function locationLinesForTicket(point: { latitude: number; longitude: number; accuracyMeters?: number | undefined }) {
+  const accuracy = point.accuracyMeters === undefined ? "" : ` (precisao de cerca de ${Math.round(point.accuracyMeters)} m)`;
+  return [`Localizacao da casa confirmada pelo cliente${accuracy}:`, `Mapa: ${googleMapsUrl(point.latitude, point.longitude)}`, `Rota: ${googleRouteUrl(point.latitude, point.longitude)}`];
+}
+
 export function googleMapsUrl(latitude: number, longitude: number) {
   return `https://www.google.com/maps/search/?api=1&query=${latitude.toFixed(6)},${longitude.toFixed(6)}`;
 }
@@ -117,6 +136,25 @@ export class LocationService {
       console.warn(`[location] envio ${record.id} ficou pendente: ${error instanceof Error ? error.message : "erro"}`);
       return record;
     }
+  }
+
+  /**
+   * O ponto ja foi no texto do chamado quando ele foi aberto: so registra no painel como entregue, sem escrever no SGP de novo.
+   * Falha aqui nao pode atrapalhar o chamado (quem chama ignora o erro).
+   */
+  async recordIncludedInTicket(input: SubmitLocationInput): Promise<void> {
+    if (!isUsableLocation(input.latitude, input.longitude, input.accuracyMeters)) return;
+    const record = await this.repo.create({
+      customerId: input.customerId,
+      contractId: input.contractId,
+      protocol: input.protocol,
+      latitude: Number(input.latitude.toFixed(7)),
+      longitude: Number(input.longitude.toFixed(7)),
+      accuracyMeters: input.accuracyMeters ?? null,
+      source: input.source
+    });
+    const now = new Date();
+    if (await this.repo.review(record.id, "approved", AUTO_REVIEWER, null, now)) await this.repo.markSgpPosted(record.id, now);
   }
 
   /** Estado do ultimo envio, para a tela mostrar "aguardando analise" / "confirmada" sem expor coordenadas de outros. */

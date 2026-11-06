@@ -1,3 +1,4 @@
+import { isUsableLocation } from "../support/locationService.js";
 import { OBSERVATION_MAX_LENGTH, preferredPeriods } from "../support/preferredPeriod.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -47,6 +48,15 @@ const createTicketSchema = z.object({
   preferredPeriod: z.enum(preferredPeriods),
   /** Recado opcional do cliente para a equipe (ex.: nao estara em casa em tal horario). */
   observation: z.string().max(OBSERVATION_MAX_LENGTH * 2).optional(),
+  /** Ponto da casa confirmado na abertura: vai dentro do texto do chamado. Se vier invalido, o chamado abre sem ele. */
+  location: z
+    .object({
+      latitude: z.number(),
+      longitude: z.number(),
+      accuracyMeters: z.number().min(0).max(100000).optional(),
+      source: z.enum(["app", "web"]).default("web")
+    })
+    .optional(),
   contactPhone: z
     .string()
     .trim()
@@ -89,8 +99,24 @@ export async function registerSupportRoutes(app: FastifyInstance, container: App
       diagnosisId: body.diagnosisId,
       contactPhone: body.contactPhone,
       ...(body.preferredPeriod ? { preferredPeriod: body.preferredPeriod } : {}),
-      ...(body.observation ? { observation: body.observation } : {})
+      ...(body.observation ? { observation: body.observation } : {}),
+      ...(body.location ? { location: { latitude: body.location.latitude, longitude: body.location.longitude, accuracyMeters: body.location.accuracyMeters } } : {})
     });
+    // O link ja foi no texto do chamado: aqui so aparece no painel de Localizacoes. Falha nao atrapalha o chamado aberto.
+    const locationIncluded = Boolean(body.location && isUsableLocation(body.location.latitude, body.location.longitude, body.location.accuracyMeters));
+    if (body.location && locationIncluded) {
+      await container.locationService
+        .recordIncludedInTicket({
+          customerId: auth.customerId,
+          contractId: body.contractId,
+          protocol: ticket.protocol,
+          latitude: body.location.latitude,
+          longitude: body.location.longitude,
+          accuracyMeters: body.location.accuracyMeters,
+          source: body.location.source
+        })
+        .catch(() => undefined);
+    }
     await container.centralActivityService.safeRecordAuthenticated({
       auth,
       request,
@@ -99,7 +125,7 @@ export async function registerSupportRoutes(app: FastifyInstance, container: App
       contractId: body.contractId,
       metadata: { ticketId: ticket.id, protocol: ticket.protocol, title: ticket.title }
     });
-    return ticket;
+    return { ...ticket, locationIncluded };
   });
 
   app.post("/v1/support/documents", { bodyLimit: DOCUMENTS_BODY_LIMIT }, async (request) => {
