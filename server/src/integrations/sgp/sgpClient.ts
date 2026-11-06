@@ -502,6 +502,51 @@ export class SgpUraClient {
   }
 
   /**
+   * Escreve um texto direto na ocorrencia, para chamado SEM OS (o app abre assim). Nenhum desses caminhos consta na doc do
+   * SGP: sao candidatos no mesmo padrao do anexo (/api/ura/ocorrencia/{id}/anexo/add/) e so se continua para o proximo quando
+   * o SGP responde 404/405 (caminho nao existe). O primeiro que aceitar fica guardado e e devolvido (vai para o log).
+   * Se nenhum existir, lanca SGP_NOTE_UNSUPPORTED e quem chamou usa o anexo. Sem retry: repetir duplicaria o texto.
+   */
+  private occurrenceCommentSuffix: string | null = null;
+  async addOccurrenceComment(input: { occurrenceId: string; text: string }): Promise<string> {
+    const app = this.config.chamado.app;
+    const token = this.config.chamado.token;
+    if (!app || !token) {
+      throw new AppError(500, "SGP_CHAMADO_NOT_CONFIGURED", "Integracao de abertura de chamado no SGP nao configurada.");
+    }
+    if (!/^\d+$/.test(input.occurrenceId)) {
+      throw new AppError(502, "SGP_NOTE_FAILED", "O SGP nao devolveu o numero da ocorrencia para gravar o comentario.");
+    }
+    const suffixes = this.occurrenceCommentSuffix ? [this.occurrenceCommentSuffix] : ["comentario/add", "anotacao/add", "observacao/add"];
+    for (const suffix of suffixes) {
+      const path = `/api/ura/ocorrencia/${input.occurrenceId}/${suffix}/`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.config.chamado.timeoutMs);
+      let response: Response;
+      try {
+        response = await fetch(`${this.config.baseUrl}${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ token, app, anotacao: input.text, comentario: input.text, observacao: input.text }).toString(),
+          signal: controller.signal
+        });
+      } catch {
+        throw new AppError(502, "SGP_NOTE_FAILED", "Nao foi possivel gravar o comentario no SGP agora.");
+      } finally {
+        clearTimeout(timer);
+      }
+      if (response.ok) {
+        this.occurrenceCommentSuffix = suffix;
+        return `/api/ura/ocorrencia/{id}/${suffix}/`;
+      }
+      if (response.status !== 404 && response.status !== 405) {
+        throw new AppError(502, "SGP_NOTE_FAILED", "Nao foi possivel gravar o comentario no SGP agora.", { upstreamStatus: response.status });
+      }
+    }
+    throw new AppError(501, "SGP_NOTE_UNSUPPORTED", "O SGP nao tem endpoint de comentario para ocorrencia sem OS.");
+  }
+
+  /**
    * Escreve um texto na OS (anotacao, lida pelo tecnico) ou na ocorrencia (comentario). Mesmo token+app do chamado.
    * POST /api/os/anotacoes/add/id/{os_id}/ e POST /api/os/ocorrencia/comentario/add/id/{os_id}/ -- confirmados em
    * 2026-11-03 (resposta {"anotacao_id":N,"usuario":"system"}). Sem retry: repetir duplicaria o texto.

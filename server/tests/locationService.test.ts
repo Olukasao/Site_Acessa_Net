@@ -10,13 +10,17 @@ import type { PublicTicketVisit } from "../src/types.js";
 const visit = (over: Partial<PublicTicketVisit> = {}): PublicTicketVisit =>
   ({ id: "1", protocol: "261103100000", contractId: "3005", status: "SCHEDULED", statusInterno: "scheduled", title: "Visita", createdAt: "", updatedAt: "", appointment: undefined, ...over }) as PublicTicketVisit;
 
-function build(options: { tickets?: PublicTicketVisit[]; orders?: Array<Record<string, unknown>>; noteFails?: "os" | "occurrence"; sgpDown?: boolean; notInSgp?: boolean } = {}) {
+function build(options: { commentFails?: boolean; tickets?: PublicTicketVisit[]; orders?: Array<Record<string, unknown>>; noteFails?: "os" | "occurrence"; sgpDown?: boolean; notInSgp?: boolean } = {}) {
   const repo = new SqliteLocationRequestRepository(createDatabase(":memory:"));
   const addServiceOrderNote = vi.fn(async (input: { target: "os" | "occurrence" }) => {
     if (options.noteFails === input.target) throw new Error("sgp");
   });
   const addOccurrenceAttachment = vi.fn(async () => undefined);
-  const client = { addServiceOrderNote, addOccurrenceAttachment } as unknown as SgpUraClient;
+  const addOccurrenceComment = vi.fn(async () => {
+    if (options.commentFails) throw new Error("sem endpoint");
+    return "/api/ura/ocorrencia/{id}/comentario/add/";
+  });
+  const client = { addServiceOrderNote, addOccurrenceAttachment, addOccurrenceComment } as unknown as SgpUraClient;
   const tickets = {
     listOccurrencesByContract: vi.fn(async () => {
       if (options.sgpDown) throw new Error("SGP fora do ar");
@@ -26,7 +30,7 @@ function build(options: { tickets?: PublicTicketVisit[]; orders?: Array<Record<s
   } as unknown as TicketProvider;
   const service = new LocationService(repo, {} as InMemoryStore, client, tickets, async () => options.tickets ?? [visit()]);
   (service as unknown as { ownership: unknown }).ownership = { assertContract: vi.fn().mockResolvedValue({ id: "3005" }) };
-  return { service, repo, addServiceOrderNote, addOccurrenceAttachment, tickets: tickets as unknown as { listOccurrencesByContract: ReturnType<typeof vi.fn> } };
+  return { service, repo, addServiceOrderNote, addOccurrenceAttachment, addOccurrenceComment, tickets: tickets as unknown as { listOccurrencesByContract: ReturnType<typeof vi.fn> } };
 }
 
 const base = { customerId: "c1", contractId: "3005", protocol: "261103100000", latitude: -23.3232, longitude: -46.7284, accuracyMeters: 25, source: "app" as const };
@@ -45,12 +49,23 @@ describe("LocationService.submit - entrega ao chamado", () => {
     expect(addOccurrenceAttachment).not.toHaveBeenCalled();
   });
 
-  it("chamado SEM OS: grava o link como anexo de texto na aba Anexos da ocorrencia", async () => {
-    const { service, addServiceOrderNote, addOccurrenceAttachment } = build({ orders: [] });
+  it("chamado SEM OS: grava o link como comentario de texto na propria ocorrencia", async () => {
+    const { service, addServiceOrderNote, addOccurrenceAttachment, addOccurrenceComment } = build({ orders: [] });
     const record = await service.submit(base);
 
     expect(record.status).toBe("approved");
     expect(addServiceOrderNote).not.toHaveBeenCalled();
+    expect(addOccurrenceAttachment).not.toHaveBeenCalled();
+    expect(addOccurrenceComment).toHaveBeenCalledWith(
+      expect.objectContaining({ occurrenceId: "784001", text: expect.stringContaining("https://www.google.com/maps/search/?api=1&query=-23.323200,-46.728400") })
+    );
+  });
+
+  it("chamado SEM OS: se o SGP nao aceitar comentario, cai no anexo de texto da aba Anexos", async () => {
+    const { service, addOccurrenceAttachment } = build({ orders: [], commentFails: true });
+    const record = await service.submit(base);
+
+    expect(record.status).toBe("approved");
     expect(addOccurrenceAttachment).toHaveBeenCalledWith(
       expect.objectContaining({ occurrenceId: "784001", filename: "localizacao-da-casa.txt", contentType: "text/plain" })
     );

@@ -113,7 +113,8 @@ export class LocationService {
     // Entrega ao chamado na hora. Falha aqui nao desfaz o envio: fica pendente para reenvio pelo painel.
     try {
       return await this.deliver(record, AUTO_REVIEWER);
-    } catch {
+    } catch (error) {
+      console.warn(`[location] envio ${record.id} ficou pendente: ${error instanceof Error ? error.message : "erro"}`);
       return record;
     }
   }
@@ -150,12 +151,15 @@ export class LocationService {
       // O comentario na ocorrencia e um segundo lugar para a equipe ver; uma falha nele nao desfaz a anotacao.
       await this.sgpClient.addServiceOrderNote({ osId: target.osId, text, target: "occurrence" }).catch(() => undefined);
     } else if (target.occurrenceId) {
-      await this.sgpClient.addOccurrenceAttachment({
-        occurrenceId: target.occurrenceId,
-        filename: "localizacao-da-casa.txt",
-        contentType: "text/plain",
-        data: Buffer.from(text, "utf8")
-      });
+      // Sem OS: o link vai como texto na propria ocorrencia (igual ao resultado da triagem). Se o SGP nao aceitar comentario
+      // nesse caso, cai no anexo de texto da aba Anexos, que sempre funcionou.
+      try {
+        const via = await this.sgpClient.addOccurrenceComment({ occurrenceId: target.occurrenceId, text });
+        console.info(`[location] link gravado como comentario da ocorrencia ${target.occurrenceId} (${via})`);
+      } catch (error) {
+        console.warn(`[location] comentario na ocorrencia ${target.occurrenceId} nao aceito (${error instanceof Error ? error.message : "erro"}); usando anexo`);
+        await this.deliverAsAttachment(target.occurrenceId, text);
+      }
     } else {
       throw new AppError(422, "LOCATION_NO_TARGET", "Nao foi possivel identificar onde gravar a localizacao no SGP.");
     }
@@ -166,6 +170,15 @@ export class LocationService {
     }
     await this.repo.markSgpPosted(record.id, now);
     return (await this.repo.findById(record.id))!;
+  }
+
+  private async deliverAsAttachment(occurrenceId: string, text: string) {
+    await this.sgpClient.addOccurrenceAttachment({
+      occurrenceId,
+      filename: "localizacao-da-casa.txt",
+      contentType: "text/plain",
+      data: Buffer.from(text, "utf8")
+    });
   }
 
   async reject(id: string, adminId: string, note: string | null): Promise<LocationRequestRecord> {
