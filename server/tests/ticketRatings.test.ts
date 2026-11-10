@@ -169,6 +169,11 @@ describe("rotas /v1/ratings", () => {
     await container.ticketRatings.createRequest({ customerId: "customer_A", contractId: "1001", protocol: "P2", ticketTitle: "Lenta", dueAt: future, now: past });
     await container.ticketRatings.createRequest({ customerId: "customer_B", contractId: "2002", protocol: "P3", ticketTitle: "Wi-Fi", dueAt: past, now: past });
 
+    // O SGP confirma P2 como encerrado agora (so assim o cartao aparece).
+    const today = new Date().toISOString().slice(0, 10);
+    vi.spyOn(container.providers.tickets, "listOccurrencesByContract").mockImplementation(
+      async (contractId: string) => [{ id: "P2", contractId, raw: closed("P2", { finalizacao: today }) }] as never
+    );
     // Dois pendentes do mesmo cliente: so o mais recente (P2) e pedido; o P1, mais antigo, nunca aparece.
     const pending = await get(app, customers.A!.auth);
     expect(pending.json().pending).toEqual([{ protocol: "P2", contractId: "1001", title: "Lenta" }]);
@@ -215,6 +220,25 @@ describe("rotas /v1/ratings", () => {
     const res = await get(app, customers.A!.auth);
     expect(res.json().pending.map((item: { protocol: string }) => item.protocol)).toEqual(["261030000100"]);
     await app.close();
+  });
+
+  it("nao mostra a avaliacao se o chamado foi reaberto ou cancelado", async () => {
+    const { container, app, customers } = await setup();
+    const today = new Date().toISOString().slice(0, 10);
+    await container.ticketRatings.createRequest({ customerId: "customer_A", contractId: "1001", protocol: "261030777", ticketTitle: "x", dueAt: new Date(), now: new Date() });
+    const spy = vi.spyOn(container.providers.tickets, "listOccurrencesByContract");
+    // Reaberto: o SGP agora diz que esta aberto.
+    spy.mockImplementation(async (contractId: string) => [{ id: "261030777", contractId, raw: closed("261030777", { status: "Aberta", finalizacao: today }) }] as never);
+    expect((await get(app, customers.A!.auth)).json().pending).toEqual([]);
+    await app.close();
+    const second = await setup();
+    // Cancelado nao e atendimento concluido.
+    vi.spyOn(second.container.providers.tickets, "listOccurrencesByContract").mockImplementation(
+      async (contractId: string) => [{ id: "261030888", contractId, raw: closed("261030888", { status: "Cancelada", finalizacao: today }) }] as never
+    );
+    expect((await get(second.app, second.customers.A!.auth)).json().pending).toEqual([]);
+    expect(await second.container.ticketRatings.listInRange(new Date(0), new Date(Date.now() + HOUR), 10)).toEqual([]);
+    await second.app.close();
   });
 
   it("detecta na hora o chamado que acabou de ser encerrado no SGP, sem esperar o ciclo do notificador", async () => {

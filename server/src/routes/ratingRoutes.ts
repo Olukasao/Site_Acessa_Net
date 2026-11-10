@@ -36,6 +36,8 @@ export async function registerRatingRoutes(app: FastifyInstance, container: AppC
   }
 
   const lastScan = new Map<string, number>();
+  /** Protocolos que, na ultima conferencia no SGP, estavam realmente encerrados (por cliente). */
+  const closedByCustomer = new Map<string, Set<string>>();
 
   /** Chamados encerrados esperando a nota deste cliente. Confere o SGP na hora, para o cartao aparecer assim que o chamado e finalizado. */
   app.get("/v1/ratings/pending", async (request) => {
@@ -45,15 +47,20 @@ export async function registerRatingRoutes(app: FastifyInstance, container: AppC
     if (now.getTime() - (lastScan.get(auth.customerId) ?? 0) >= SCAN_MIN_INTERVAL_MS) {
       if (lastScan.size > 5000) lastScan.clear();
       lastScan.set(auth.customerId, now.getTime());
+      if (closedByCustomer.size > 5000) closedByCustomer.clear();
       const contractIds = container.store.listContracts(auth.customerId).map((contract) => contract.id);
+      const closedNow = new Set<string>();
       await Promise.all(
         contractIds.map((contractId) =>
-          recordClosedTickets({ ratings: container.ticketRatings, tickets: container.providers.tickets }, auth.customerId, contractId, now, 0).catch(() => 0)
+          recordClosedTickets({ ratings: container.ticketRatings, tickets: container.providers.tickets }, auth.customerId, contractId, now, 0, closedNow).catch(() => 0)
         )
       );
+      closedByCustomer.set(auth.customerId, closedNow);
     }
     const since = new Date(now.getTime() - RATING_EXPIRES_DAYS * 24 * 60 * 60 * 1000);
-    const pending = await container.ticketRatings.listPending(auth.customerId, now, since);
+    // So pede a nota se o SGP confirma o chamado como encerrado agora (reaberto, cancelado ou sem confirmacao: nao aparece).
+    const closed = closedByCustomer.get(auth.customerId);
+    const pending = (await container.ticketRatings.listPending(auth.customerId, now, since)).filter((item) => closed?.has(item.protocol));
     return {
       pending: pending.map((item) => ({ protocol: item.protocol, contractId: item.contractId, title: item.ticketTitle }))
     };

@@ -1,6 +1,7 @@
 import type { TicketProvider, TicketSummaryWithRaw } from "../integrations/sgp/providers.js";
 import type { SgpOccurrenceRaw } from "../integrations/sgp/sgpClient.js";
 import type { PublicTicketVisit } from "../types.js";
+import { mapSgpStatus } from "../integrations/sgp/statusMapper.js";
 import { extractTechnicianName, mapSgpOsToCustomerVisit } from "../integrations/sgp/sgpMapper.js";
 import type { PushDeviceRepository, PushDeviceRecord } from "../repositories/pushDeviceRepository.js";
 import type { TicketRatingRepository } from "../repositories/ticketRatingRepository.js";
@@ -50,7 +51,9 @@ export async function recordClosedTickets(
   customerId: string,
   contractId: string,
   now: Date,
-  delayMs = DEFAULT_PUSH_DELAY_MS
+  delayMs = DEFAULT_PUSH_DELAY_MS,
+  /** Recebe o protocolo do chamado encerrado mais recente (so ele pode ser avaliado agora). */
+  closedNow?: Set<string>
 ): Promise<number> {
   if (!/^\d+$/.test(contractId)) return 0;
   const oldest = todayInSaoPaulo(new Date(now.getTime() - RATING_CLOSED_WINDOW_DAYS * DAY_MS));
@@ -63,6 +66,8 @@ export async function recordClosedTickets(
     const raw = (occurrence as TicketSummaryWithRaw).raw;
     const visit = mapSgpOsToCustomerVisit(raw, occurrence.contractId);
     if (!visit || visit.statusInterno !== "closed") continue;
+    // Chamado cancelado nao e atendimento concluido: nao pede avaliacao.
+    if (mapSgpStatus(String(raw.status ?? "")) === "CANCELED") continue;
     const closedDate = visit.updatedAt.slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(closedDate) || closedDate < oldest) continue;
     if (!latest || closedDate > latest.closedDate || (closedDate === latest.closedDate && visit.protocol > latest.visit.protocol)) {
@@ -70,6 +75,7 @@ export async function recordClosedTickets(
     }
   }
   if (!latest) return 0;
+  closedNow?.add(latest.visit.protocol);
 
   const isNew = await deps.ratings.createRequest({
     customerId,
