@@ -334,7 +334,7 @@ export async function registerContractRequestRoutes(app: FastifyInstance, contai
     });
 
     // Avaliacoes respondidas (nota 1-5 e comentario) por protocolo do chamado: a Agenda cruza com a OS (campo "ocorrencia"
-    // do SGP tem esse mesmo protocolo) para dar a nota por tecnico. Sem nome nem contato do cliente. Mesmo token do feed acima.
+    // do SGP tem esse mesmo protocolo) para dar a nota por tecnico. Traz o nome do cliente (sem CPF/contato). Mesmo token do feed acima.
     app.get("/api/integracoes/avaliacoes", async (request, reply) => {
       const header = request.headers.authorization;
       const provided = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : "";
@@ -344,11 +344,15 @@ export async function registerContractRequestRoutes(app: FastifyInstance, contai
       const query = request.query as { desde?: string };
       const since = /^\d{4}-\d{2}-\d{2}$/.test(query.desde ?? "") ? new Date(`${query.desde}T00:00:00-03:00`) : new Date(Date.now() - 45 * 86400000);
       reply.header("Cache-Control", "no-store");
-      const rows = await container.ticketRatings.listInRange(since, new Date(Date.now() + 86400000), 5000);
+      const rows = (await container.ticketRatings.listInRange(since, new Date(Date.now() + 86400000), 5000)).filter(
+        (row) => row.rating !== null && row.answeredAt
+      );
+      // Nome do cliente (ultimo conhecido pelo login na Central), tambem para avaliacoes antigas; sem CPF nem contato.
+      const names = await container.centralActivityService.findCustomerNames([...new Set(rows.map((row) => row.customerId))]);
       return {
         items: rows
-          .filter((row) => row.rating !== null && row.answeredAt)
           .map((row) => ({
+            customerName: names.get(row.customerId) ?? null,
             protocol: row.protocol,
             contractId: row.contractId,
             rating: row.rating,
