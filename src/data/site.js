@@ -18,6 +18,7 @@ export const company = {
   originalDeveloper: "Lucas Soares",
   phone: "0800 444 5799",
   phoneHref: "tel:08004445799",
+  email: "contato@acessanet.com",
   whatsapp: "5508004445799",
   supportHours: "Segunda a segunda, 24h",
   centralUrl: "https://acessanet.com.br/cliente",

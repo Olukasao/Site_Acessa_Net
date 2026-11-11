@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { FaWhatsapp } from "react-icons/fa";
-import { MapPin, Phone } from "lucide-react";
+import { Mail, MapPin, Phone } from "lucide-react";
 import logo from "../assets/logo-acessanet-3d.png";
 import { company, coveredCitiesLabel, whatsappLink, wifiGuideUrl } from "../data/site";
 import "./footer.css";
@@ -33,6 +33,13 @@ export default function Footer() {
               <span>
                 <strong>WhatsApp</strong>
                 <small>Assistente virtual</small>
+              </span>
+            </a>
+            <a href={`mailto:${company.email}`} className="ftr-contact">
+              <Mail size={18} aria-hidden="true" />
+              <span>
+                <strong>E-mail</strong>
+                <small>{company.email}</small>
               </span>
             </a>
           </div>
