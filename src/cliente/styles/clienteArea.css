@@ -3616,3 +3616,14 @@ body.cliente-area-shell #root {
 .cliente-attendance-text-form textarea.has-error,
 .cliente-attendance-text-form input[aria-invalid="true"] { border-color: #d92d20; box-shadow: 0 0 0 3px rgba(217, 45, 32, 0.12); }
 .cliente-period-field.has-error { border: 1px solid #d92d20; border-radius: 12px; padding: 10px; background: #fff8f7; }
+
+/* Chat de atendimento: so aparece quando a AcessaNet abre a conversa (ver AtendimentoChatGate). */
+.cliente-chat-gate { position: fixed; right: 18px; bottom: 18px; z-index: 60; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.cliente-chat-gate-fab { position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; border: 0; border-radius: 999px; cursor: pointer; font: inherit; font-weight: 700; color: #fff; background: linear-gradient(135deg, #2f6bff, #1f4fd0); box-shadow: 0 10px 26px rgba(31, 79, 208, 0.45); }
+.cliente-chat-gate-dot { position: absolute; top: 6px; right: 8px; width: 10px; height: 10px; border-radius: 50%; background: #ff5a5f; box-shadow: 0 0 0 2px #fff; animation: cliente-chat-gate-pulso 1.6s ease-in-out infinite; }
+@keyframes cliente-chat-gate-pulso { 50% { transform: scale(1.35); } }
+.cliente-chat-gate-panel { position: relative; width: min(400px, calc(100vw - 24px)); max-height: min(640px, calc(100dvh - 90px)); display: flex; flex-direction: column; border-radius: 18px; overflow: hidden; background: var(--cliente-surface, #fff); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35); }
+.cliente-chat-gate-panel .cliente-chat-panel { min-height: 0; flex: 1; border-radius: 0; box-shadow: none; }
+.cliente-chat-gate-close { position: absolute; top: 10px; right: 10px; z-index: 2; display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 50%; cursor: pointer; background: rgba(0, 0, 0, 0.08); color: inherit; }
+@media (prefers-reduced-motion: reduce) { .cliente-chat-gate-dot { animation: none; } }
+@media (max-width: 520px) { .cliente-chat-gate { right: 10px; bottom: 76px; } }

@@ -30,6 +30,8 @@ import { registerAdminRatingRoutes } from "./routes/adminRatingRoutes.js";
 import { registerAdminLocationRoutes } from "./routes/adminLocationRoutes.js";
 import { registerLocationRoutes } from "./routes/locationRoutes.js";
 import { registerRatingRoutes } from "./routes/ratingRoutes.js";
+import { registerChatTokenRoutes } from "./routes/chatTokenRoutes.js";
+import { registerChatPushRoutes } from "./routes/chatPushRoutes.js";
 import { registerAppCrashRoutes } from "./routes/appCrashRoutes.js";
 import { registerAdminAppCrashRoutes } from "./routes/adminAppCrashRoutes.js";
 import { registerBugReportRoutes } from "./routes/bugReportRoutes.js";
@@ -326,6 +328,8 @@ export async function buildApp(container: AppContainer = createContainer()) {
       /** Chamados abertos pelo site, para a aba Chamados do Workspace (mesmo token do resumo acima). */
       "GET /api/integracoes/marketing/chamados",
       "GET /api/integracoes/marketing/chamados/:protocol",
+      /** Aviso no celular do cliente quando o atendente abre/responde o chat (token proprio CHAT_PUSH_TOKEN, ver chatPushRoutes.ts). */
+      "POST /api/integracoes/atendimento/push",
       /**
        * Rota de teste da integracao OLT Cloud -- nao usa sessao de cliente,
        * tem sua propria protecao (x-debug-token + so registrada fora de
@@ -386,6 +390,8 @@ export async function buildApp(container: AppContainer = createContainer()) {
   await registerAdminRatingRoutes(app, container);
   await registerAdminLocationRoutes(app, container);
   await registerRatingRoutes(app, container);
+  await registerChatTokenRoutes(app, container);
+  await registerChatPushRoutes(app, container);
   await registerAppCrashRoutes(app, container);
   await registerAdminAppCrashRoutes(app, container);
   await registerDebugOltCloudRoutes(app, container);

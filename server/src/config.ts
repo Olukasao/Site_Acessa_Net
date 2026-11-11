@@ -107,6 +107,18 @@ export interface AppConfig {
   contractFeed: {
     token: string | undefined;
   };
+  /**
+   * Chat de atendimento (acessanet-chat-api). `tokenSecret` e o mesmo segredo que a chat-api usa para conferir o token do
+   * cliente (CUSTOMER_CHAT_JWT_SECRET); sem ele a rota /api/auth/chat-token fica desligada. `pushToken` protege a rota
+   * pela qual a chat-api pede o aviso no celular do cliente (sem ele a rota nem existe).
+   */
+  chat: {
+    tokenSecret: string | undefined;
+    ttlSeconds: number;
+    issuer: string;
+    audience: string;
+    pushToken: string | undefined;
+  };
   /** Resumo agregado do site para a aba Marketing do Workspace (a rota so existe com token). */
   marketingFeed: {
     token: string | undefined;
@@ -389,6 +401,13 @@ export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
     },
     marketingFeed: {
       token: unwrapEnv(process.env.MARKETING_FEED_TOKEN)
+    },
+    chat: {
+      tokenSecret: unwrapEnv(process.env.CHAT_TOKEN_SECRET),
+      ttlSeconds: Math.min(3600, Math.max(60, Number(process.env.CHAT_TOKEN_TTL_SECONDS ?? 900) || 900)),
+      issuer: unwrapEnv(process.env.CHAT_TOKEN_ISSUER) ?? "acessanet-app",
+      audience: unwrapEnv(process.env.CHAT_TOKEN_AUDIENCE) ?? "acessanet-chat-api",
+      pushToken: unwrapEnv(process.env.CHAT_PUSH_TOKEN)
     },
     wifi: {
       radiusToken: unwrapEnv(process.env.WIFI_RADIUS_TOKEN),

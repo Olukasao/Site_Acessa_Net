@@ -831,6 +831,7 @@ export default function ClienteArea() {
   return (
     <>
       <ToastHost />
+      {selectedContractApiId ? <AtendimentoChatGate contractId={selectedContractApiId} /> : null}
       {modalNotice ? (
         <NoticeModal notice={modalNotice} onDismiss={handleDismissNotice} />
       ) : (
@@ -4118,7 +4119,7 @@ function QuickTipCard({ selectedCategoryId }) {
   );
 }
 
-function CustomerChat({ contractId, onClosed, ticket }) {
+function CustomerChat({ contractId, onClosed, ticket = {} }) {
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [chatToken, setChatToken] = useState("");
@@ -4140,7 +4141,7 @@ function CustomerChat({ contractId, onClosed, ticket }) {
   }, [onClosed, ticket]);
 
   const loadConversation = useCallback(async (silent = false) => {
-    if (!contractId || !ticket?.id) {
+    if (!contractId) {
       return;
     }
 
@@ -4150,7 +4151,7 @@ function CustomerChat({ contractId, onClosed, ticket }) {
     }
 
     try {
-      const token = await getChatToken(contractId, ticket.id);
+      const token = await getChatToken(contractId, ticket?.id);
       setChatToken(token);
       const payload = await chatRequest("/api/customer/chat/conversations/active", token);
       const nextConversation = normalizeConversation(payload?.conversation || payload, ticket);
@@ -4261,21 +4262,9 @@ function CustomerChat({ contractId, onClosed, ticket }) {
     );
   }
 
+  // Enquanto a AcessaNet nao abre o atendimento, o cliente nao ve nada (nem "aguardando"): o chat aparece sozinho quando abrir.
   if (waitingForAgent && !conversation) {
-    return (
-      <section className="cliente-panel cliente-chat-panel">
-        <div className="cliente-chat-head">
-          <div>
-            <span>Chat AcessaNet</span>
-            <h3>{ticket.title || `Chamado #${ticket.protocol || ticket.id}`}</h3>
-          </div>
-        </div>
-        <InlineNotice
-          title="Aguardando atendimento"
-          message="Seu chamado foi aberto. O chat aparecerá aqui quando um atendente iniciar a conversa."
-        />
-      </section>
-    );
+    return null;
   }
 
   if (conversation?.status === "closed") {
@@ -4291,7 +4280,7 @@ function CustomerChat({ contractId, onClosed, ticket }) {
       <div className="cliente-chat-head">
         <div>
           <span>Chat AcessaNet</span>
-          <h3>{conversation?.ticketTitle || ticket.title || `Chamado #${ticket.protocol || ticket.id}`}</h3>
+          <h3>{conversation?.ticketTitle || ticket.title || (ticket.id ? `Chamado #${ticket.protocol || ticket.id}` : "Atendimento AcessaNet")}</h3>
         </div>
         <span className="cliente-live-chip">Atualização automática</span>
       </div>
@@ -4325,6 +4314,101 @@ function CustomerChat({ contractId, onClosed, ticket }) {
         </button>
       </form>
     </section>
+  );
+}
+
+/**
+ * Chat de atendimento que so aparece quando a AcessaNet abre a conversa. Enquanto nao houver conversa aberta por um
+ * atendente, nao renderiza nada. Consulta de tempos em tempos (e ao voltar para o app, como ao tocar na notificacao).
+ */
+const GATE_POLL_MS = 25_000;
+
+function AtendimentoChatGate({ contractId }) {
+  const [active, setActive] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!contractId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const seenKey = "acessanet:chat-visto";
+
+    async function check() {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+
+      try {
+        const token = await getChatToken(contractId);
+        const payload = await chatRequest("/api/customer/chat/conversations/active", token);
+        const conversation = payload?.conversation || payload;
+        const id = String(conversation?.id || "");
+        const isOpen = Boolean(id) && conversation?.status !== "closed";
+
+        if (cancelled) {
+          return;
+        }
+
+        setActive(isOpen);
+
+        // Primeira vez que esta conversa aparece: abre o painel sozinho para o cliente ver que o atendimento comecou.
+        if (isOpen) {
+          try {
+            if (window.sessionStorage.getItem(seenKey) !== id) {
+              window.sessionStorage.setItem(seenKey, id);
+              setOpen(true);
+            }
+          } catch {
+            // sem sessionStorage: o botao continua disponivel
+          }
+        } else {
+          setOpen(false);
+        }
+      } catch {
+        // Sem conversa (404), sem sessao, chat desligado ou sem rede: nada aparece.
+        if (!cancelled) {
+          setActive(false);
+        }
+      }
+    }
+
+    void check();
+    const timer = window.setInterval(() => void check(), GATE_POLL_MS);
+    const onVisible = () => void check();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [contractId]);
+
+  if (!active) {
+    return null;
+  }
+
+  return (
+    <div className="cliente-chat-gate">
+      {open ? (
+        <div className="cliente-chat-gate-panel" role="dialog" aria-label="Atendimento AcessaNet">
+          <button className="cliente-chat-gate-close" type="button" aria-label="Minimizar o chat" onClick={() => setOpen(false)}>
+            <X size={18} />
+          </button>
+          <CustomerChat contractId={contractId} onClosed={() => window.setTimeout(() => setActive(false), 6000)} />
+        </div>
+      ) : (
+        <button className="cliente-chat-gate-fab" type="button" onClick={() => setOpen(true)}>
+          <MessageCircle size={20} aria-hidden="true" />
+          <span>Atendimento</span>
+          <i className="cliente-chat-gate-dot" aria-hidden="true" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -5171,8 +5255,8 @@ function normalizeConversation(input, ticket) {
   const now = new Date().toISOString();
   return {
     id: String(input?.id || input?.conversationId || input?.conversation_id || ""),
-    ticketId: String(input?.ticketId || input?.ticket_id || ticket.id),
-    ticketTitle: input?.ticketTitle || input?.ticket_title || ticket.title,
+    ticketId: String(input?.ticketId || input?.ticket_id || ticket?.id || ""),
+    ticketTitle: input?.ticketTitle || input?.ticket_title || ticket?.title,
     status: input?.status || "open",
     createdAt: input?.createdAt || input?.created_at || now,
     updatedAt: input?.updatedAt || input?.updated_at || now

@@ -62,6 +62,7 @@ import {
   type PasswordResetRepository
 } from "./repositories/passwordResetRepository.js";
 import { SupportService } from "./support/supportService.js";
+import { ChatTokenService, usableChatSecret } from "./auth/chatTokenService.js";
 import { LocationService } from "./support/locationService.js";
 import { DocumentsService } from "./support/documentsService.js";
 import { AdminTicketService } from "./support/adminTicketService.js";
@@ -146,6 +147,8 @@ export interface AppContainer {
   localPasswordAuthService: LocalPasswordAuthService;
   passwordResetService: PasswordResetService;
   supportService: SupportService;
+  /** null = chat desligado (sem CHAT_TOKEN_SECRET valido). */
+  chatTokenService: ChatTokenService | null;
   documentsService: DocumentsService;
   locationService: LocationService;
   /** Le-somente: espelha pro admin os chamados abertos via Central (log de atividade OPEN_TICKET), enriquecidos ao vivo com o SGP -- ver server/src/support/adminTicketService.ts. */
@@ -468,6 +471,7 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     persistentLimiter,
     pushDevices,
     ticketRatings,
+    chatTokenService: usableChatSecret(config.chat.tokenSecret) ? new ChatTokenService(config.chat, config.chat.tokenSecret) : null,
     locationRequests,
     appCrashes,
     localPasswordAuthService,
