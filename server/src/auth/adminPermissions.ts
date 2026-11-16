@@ -20,7 +20,9 @@ export type AdminPermission =
   /** Apagar avaliacoes do atendimento (limpar testes). Dado de cliente: so admin. */
   | "avaliacoes.delete"
   /** Aprovar/recusar a localizacao da casa enviada pelo cliente (vira link de mapa na OS do SGP). */
-  | "localizacoes.review";
+  | "localizacoes.review"
+  /** Painel de roteadores/Wi-Fi (so leitura). */
+  | "roteadores.read";
 
 /**
  * Mapa fixo em codigo (nao em banco): time pequeno, sem necessidade de UI de
@@ -40,7 +42,8 @@ const rolePermissions: Record<AdminRole, ReadonlySet<AdminPermission>> = {
     "ranking.read",
     "marketing.manage",
     "avaliacoes.delete",
-    "localizacoes.review"
+    "localizacoes.review",
+    "roteadores.read"
   ]),
   editor: new Set([
     "avisos.read",
@@ -50,7 +53,8 @@ const rolePermissions: Record<AdminRole, ReadonlySet<AdminPermission>> = {
     "contratacoes.read",
     "contratacoes.update",
     "ranking.read",
-    "localizacoes.review"
+    "localizacoes.review",
+    "roteadores.read"
   ]),
   /** vendedor atende os pedidos de contratacao e nada mais (ver roleCanReachAdminPath). */
   vendedor: new Set(["contratacoes.read", "contratacoes.update"]),

@@ -6,6 +6,8 @@ import { renderOtpEmailHtml, renderOtpEmailText } from "./otpEmailTemplate.js";
 export interface Mailer {
   /** Lanca AppError("EMAIL_SEND_FAILED") em caso de falha -- nunca deixa detalhes de SMTP vazarem pro chamador. */
   sendOtpEmail(input: { to: string; name: string; code: string }): Promise<void>;
+  /** Aviso de seguranca: a senha do Wi-Fi foi alterada pela Central. Opcional para nao quebrar implementacoes antigas. */
+  sendWifiChangedEmail?(input: { to: string; name: string; when: string; bands: string }): Promise<void>;
   /** So testa a conexao/autenticacao (transporter.verify()) -- nao envia nenhum e-mail. */
   verifyConnection(): Promise<{ ok: boolean; error?: string }>;
 }
@@ -86,6 +88,30 @@ export class SmtpMailer implements Mailer {
         // Log nunca pode derrubar o fluxo de redefinicao de senha.
       }
       throw new AppError(502, "EMAIL_SEND_FAILED", "Nao foi possivel enviar o codigo agora. Tente novamente em instantes.");
+    }
+  }
+
+  async sendWifiChangedEmail(input: { to: string; name: string; when: string; bands: string }): Promise<void> {
+    const firstName = (input.name || "").trim().split(/\s+/)[0] || "cliente";
+    const text = [
+      `Olá, ${firstName}.`,
+      "",
+      `A senha do seu Wi-Fi (${input.bands}) foi alterada pela Central do Assinante em ${input.when}.`,
+      "",
+      "Foi você? Então está tudo certo: seus aparelhos vão precisar da nova senha.",
+      "Não foi você? Fale com a gente agora pelo atendimento da Central do Assinante ou pelo telefone, e troque a senha da sua Central.",
+      "",
+      "Acessanet"
+    ].join("\n");
+    try {
+      await this.transporter.sendMail({ from: this.config.from, to: input.to, subject: "A senha do seu Wi-Fi foi alterada", text });
+    } catch (error) {
+      try {
+        this.logger(describeSendError(error, input.to, this.config));
+      } catch {
+        // log nunca derruba o fluxo
+      }
+      throw new AppError(502, "EMAIL_SEND_FAILED", "Nao foi possivel enviar o aviso agora.");
     }
   }
 

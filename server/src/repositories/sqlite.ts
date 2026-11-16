@@ -174,7 +174,26 @@ function migrate(db: DatabaseSync) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       claimed_at TEXT,
-      finished_at TEXT
+      finished_at TEXT,
+      customer_confirmation TEXT,
+      confirmed_at TEXT,
+      ticket_protocol TEXT,
+      notified_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS router_agent_status (
+      agent_id TEXT PRIMARY KEY,
+      last_seen_at TEXT NOT NULL,
+      dry_run INTEGER NOT NULL,
+      version TEXT
+    );
+    CREATE TABLE IF NOT EXISTS router_inventory (
+      contract_id TEXT PRIMARY KEY,
+      vendor TEXT,
+      model TEXT,
+      management TEXT NOT NULL,
+      cert_subject TEXT,
+      cert_fp TEXT,
+      seen_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_router_wifi_jobs_state ON router_wifi_jobs (state, created_at);
     CREATE INDEX IF NOT EXISTS idx_router_wifi_jobs_contract ON router_wifi_jobs (contract_id, kind, created_at);
@@ -499,6 +518,9 @@ function migrate(db: DatabaseSync) {
 
   addColumnIfMissing(db, "central_notices", "image_url", "TEXT");
   addColumnIfMissing(db, "contract_requests", "cpf", "TEXT");
+  for (const [column, definition] of [["customer_confirmation", "TEXT"], ["confirmed_at", "TEXT"], ["ticket_protocol", "TEXT"], ["notified_at", "TEXT"]] as const) {
+    addColumnIfMissing(db, "router_wifi_jobs", column, definition);
+  }
 }
 
 /**

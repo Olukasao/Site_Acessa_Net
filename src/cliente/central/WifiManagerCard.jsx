@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Eye, EyeOff, KeyRound, Loader2, Router, Wifi, X } from "lucide-react";
 import { Link } from "react-router-dom";
-import { changeWifiPassword, getWifiJob, getWifiStatus } from "../clienteApi";
+import { changeWifiPassword, confirmWifiChange, getWifiJob, getWifiStatus } from "../clienteApi";
 import "./wifiManager.css";
 
 /**
@@ -78,7 +78,12 @@ export default function WifiManagerCard({ contract }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [changeJob, setChangeJobRaw] = useState(null);
-  const change = useJobPolling(changeJob);
+  const polled = useJobPolling(changeJob);
+  const [confirmedJob, setConfirmedJob] = useState(null);
+  const [confirming2, setConfirming2] = useState(false);
+  const [confirmError, setConfirmError] = useState("");
+  // pedido recente que ainda espera o "Conseguiu conectar?" (inclusive de uma visita anterior a esta tela)
+  const change = confirmedJob ?? polled ?? status?.pendingChange ?? null;
 
   useEffect(() => {
     if (!contractId) return undefined;
@@ -89,6 +94,20 @@ export default function WifiManagerCard({ contract }) {
   }, [contractId]);
 
   if (!status?.available) return null;
+  if (status.agentOnline === false && !change) {
+    return (
+      <section className="cliente-panel wifi-manager" aria-labelledby="wifi-manager-title">
+        <div className="cliente-panel-head">
+          <Wifi size={22} />
+          <div>
+            <span>Minha Internet</span>
+            <h3 id="wifi-manager-title">Gerenciar meu Wi-Fi</h3>
+          </div>
+        </div>
+        <p className="wifi-muted" role="status">Indisponível agora. Tente de novo em alguns minutos ou <Link to="/cliente/atendimento?categoria=router_password">peça a troca pelo atendimento</Link>.</p>
+      </section>
+    );
+  }
 
   const info = statusJob?.state === "completed" ? statusJob.result : null;
   const reading = statusJob && !statusJob.done;
@@ -97,6 +116,20 @@ export default function WifiManagerCard({ contract }) {
   const valid = ruleState.every((r) => r.met);
   const selectedBands = BAND_OPTIONS.find((o) => o.id === band)?.bands ?? [];
   const busy = sending || (change && !change.done);
+
+  async function answer(connected) {
+    setConfirming2(true);
+    setConfirmError("");
+    try {
+      const r = await confirmWifiChange(change.id, connected);
+      setConfirmedJob(r.job);
+      if (r.error) setConfirmError(r.error);
+    } catch (e) {
+      setConfirmError(e?.message || "Não foi possível registrar sua resposta agora.");
+    } finally {
+      setConfirming2(false);
+    }
+  }
 
   async function submit() {
     setSending(true);
@@ -138,12 +171,23 @@ export default function WifiManagerCard({ contract }) {
       ) : null}
 
       {change ? (
-        <div className={`wifi-result ${change.done ? `is-${change.state}` : ""}`} role="status" aria-live="polite">
-          {change.done ? (change.state === "completed" ? <Check size={18} /> : <X size={18} />) : <Loader2 size={18} className="wifi-spin" />}
+        <div className={`wifi-result ${change.done ? `is-${change.needsConfirmation ? "pending" : change.state}` : ""}`} role="status" aria-live="polite">
+          {change.done ? (change.state === "completed" || change.needsConfirmation ? <Check size={18} /> : <X size={18} />) : <Loader2 size={18} className="wifi-spin" />}
           <div>
             <strong>{change.message}</strong>
-            {change.state === "completed" ? <p>Seus aparelhos vão precisar da nova senha para conectar de novo.</p> : null}
-            {change.done && change.state !== "completed" ? <p><Link to="/cliente/atendimento?categoria=router_password">Abrir atendimento para trocar a senha</Link></p> : null}
+            {change.state === "completed" && !change.confirmation ? <p>Seus aparelhos vão precisar da nova senha para conectar de novo.</p> : null}
+            {change.needsConfirmation ? (
+              <div className="wifi-confirmation">
+                <p><strong>Conseguiu conectar com a nova senha?</strong></p>
+                <div className="wifi-confirmation-actions">
+                  <button type="button" className="home-btn home-btn-primary" disabled={confirming2} onClick={() => answer(true)}>Sim, conectou</button>
+                  <button type="button" className="home-btn home-btn-ghost" disabled={confirming2} onClick={() => answer(false)}>Não consegui</button>
+                </div>
+                {confirmError ? <p className="cliente-field-error" role="alert">{confirmError}</p> : null}
+              </div>
+            ) : null}
+            {change.confirmation === "not_connected" && !change.ticketProtocol ? <p><Link to="/cliente/atendimento?categoria=router_password">Abrir atendimento para ajustar a senha</Link></p> : null}
+            {change.done && change.state !== "completed" && !change.needsConfirmation && !change.confirmation ? <p><Link to="/cliente/atendimento?categoria=router_password">Abrir atendimento para trocar a senha</Link></p> : null}
           </div>
         </div>
       ) : null}
@@ -155,7 +199,7 @@ export default function WifiManagerCard({ contract }) {
         </p>
       ) : null}
 
-      {canChange && !busy ? (
+      {canChange && !busy && !change?.needsConfirmation ? (
         <form className="wifi-form" onSubmit={(e) => { e.preventDefault(); if (valid) setConfirming(true); }}>
           <fieldset className="wifi-bands">
             <legend>Rede</legend>

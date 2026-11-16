@@ -20,6 +20,12 @@ App/Site -> Central (Hostinger) -- tarefa: contrato + senha cifrada --> Agente (
 - Com `ROUTER_AGENT_DRY_RUN=1` (o padrão), o agente só lê o SGP e **nunca entra num roteador**.
 - O painel do SGP não é API oficial. Se o layout mudar, a leitura devolve vazio e a tarefa falha com `SGP_UNAVAILABLE`, sem chutar valores.
 
+## Sinal de vida, inventário e velocidade
+
+- **Sinal de vida:** cada busca de tarefas (a cada ~3 s) avisa a Central que o agente está no ar. Se passar de 45 s sem sinal, a Central mostra "indisponível agora" ao cliente e recusa o pedido na hora, em vez de deixar na fila 3 minutos.
+- **Inventário (só leitura):** `npm run inventory -- contratos.txt --delay=4000 --hours=1-6` passa devagar pelos contratos da lista (um número por linha), só dentro da janela de horário (hora de São Paulo), e manda para a Central o fabricante e o modelo de cada roteador. **Não faz login em roteador e não tenta senha**: usa o SGP, o certificado fixado e a tela de login. Roteador de fabricante desconhecido anota o dono e a impressão digital do certificado, que é o que falta para fixar o próximo fabricante. Retoma de onde parou (`inventory-progress.json`). O resultado aparece em Admin > Roteadores.
+- **Velocidade (Huawei):** a troca nas duas redes leva cerca de 27 s (login ~9 s + 2 redes). O roteador demora 3 a 6 s para aplicar cada rede e para de responder nesse tempo, então em vez de esperar um tempo fixo o agente tenta ler de novo até ele voltar.
+
 ## Estado dos fabricantes
 
 | Fabricante | Situação | Credencial no cofre |

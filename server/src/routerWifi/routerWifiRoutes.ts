@@ -15,7 +15,36 @@ const changeBody = z
     currentPassword: z.string().min(1).max(200)
   })
   .strict();
-const claimBody = z.object({ agentId: z.string().regex(/^[a-zA-Z0-9_.-]{1,64}$/), max: z.number().int().min(1).max(10).default(3) }).strict();
+const claimBody = z
+  .object({
+    agentId: z.string().regex(/^[a-zA-Z0-9_.-]{1,64}$/),
+    max: z.number().int().min(1).max(10).default(3),
+    // sinal de vida do agente: modo seguro ligado e versao
+    dryRun: z.boolean().optional(),
+    version: z.string().max(32).optional()
+  })
+  .strict();
+const confirmBody = z.object({ connected: z.boolean() }).strict();
+const inventoryBody = z
+  .object({
+    agentId: z.string().regex(/^[a-zA-Z0-9_.-]{1,64}$/),
+    entries: z
+      .array(
+        z
+          .object({
+            contractId: z.string().regex(/^\d{1,12}$/),
+            vendor: z.string().max(32).nullable(),
+            model: z.string().max(64).nullable(),
+            management: z.enum(["available", "offline", "unsupported", "requires_validation", "unreachable", "not_identified"]),
+            certSubject: z.string().max(120).nullable().optional(),
+            certFp: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional()
+          })
+          .strict()
+      )
+      .min(1)
+      .max(200)
+  })
+  .strict();
 const jobParams = z.object({ jobId: z.string().uuid() });
 
 /**
@@ -25,6 +54,13 @@ const jobParams = z.object({ jobId: z.string().uuid() });
  */
 export async function registerRouterWifiRoutes(app: FastifyInstance, container: AppContainer) {
   const service = container.routerWifiService;
+
+  /** Para a tela decidir se oferece a troca (sem criar tarefa nem consultar o roteador). */
+  app.get("/api/customer/wifi/availability", async (request) => {
+    const auth = requireAuth(request);
+    const { contractId } = parseQuery(contractQuery, request.query);
+    return service.availability(auth.customerId, contractId);
+  });
 
   app.get("/api/customer/wifi/status", async (request) => {
     const auth = requireAuth(request);
@@ -70,6 +106,16 @@ export async function registerRouterWifiRoutes(app: FastifyInstance, container: 
     return { job: await service.getJob(auth.customerId, jobId) };
   });
 
+  /** "Conseguiu conectar?" -- sim fecha o pedido; nao abre o chamado (sem a senha). */
+  app.post("/api/customer/wifi/jobs/:jobId/confirm", async (request) => {
+    const auth = requireAuth(request);
+    const { jobId } = parseQuery(jobParams, request.params);
+    const body = parseBody(confirmBody, request.body);
+    const out = await service.confirm({ customerId: auth.customerId, jobId, connected: body.connected });
+    request.log.info({ tag: "ROUTER_WIFI", jobId, connected: body.connected, ticketOpened: out.ticketOpened }, "[ROUTER_WIFI] resposta do cliente");
+    return out;
+  });
+
   const token = container.config.routerWifi.agentToken;
   if (!token || token.length < 32) return;
 
@@ -82,7 +128,14 @@ export async function registerRouterWifiRoutes(app: FastifyInstance, container: 
   app.post("/api/internal/router-agent/claim", async (request) => {
     requireAgent(request);
     const body = parseBody(claimBody, request.body ?? {});
-    return { jobs: await service.claim(body.agentId, body.max) };
+    return { jobs: await service.claim(body.agentId, body.max, { dryRun: body.dryRun, version: body.version }) };
+  });
+
+  /** Inventario so-leitura enviado pelo agente (fabricante/modelo por contrato, sem senha). */
+  app.post("/api/internal/router-agent/inventory", async (request) => {
+    requireAgent(request);
+    const body = parseBody(inventoryBody, request.body);
+    return { saved: await service.saveInventory(body.entries.map((e) => ({ ...e, certSubject: e.certSubject ?? null, certFp: e.certFp ?? null }))) };
   });
 
   app.post("/api/internal/router-agent/jobs/:jobId", async (request) => {

@@ -44,6 +44,7 @@ import { registerChamadosFeedRoutes } from "./routes/chamadosFeedRoutes.js";
 import { registerAdminSellerRoutes } from "./routes/adminSellerRoutes.js";
 import { registerWifiRoutes } from "./wifi/wifiRoutes.js";
 import { registerRouterWifiRoutes } from "./routerWifi/routerWifiRoutes.js";
+import { registerAdminRouterWifiRoutes } from "./routes/adminRouterWifiRoutes.js";
 import { roleCanReachAdminPath } from "./auth/adminPermissions.js";
 import { AppError } from "./errors.js";
 
@@ -334,6 +335,7 @@ export async function buildApp(container: AppContainer = createContainer()) {
       /** Agente interno de roteadores (token proprio ROUTER_AGENT_TOKEN, ver routerWifi/routerWifiRoutes.ts). */
       "POST /api/internal/router-agent/claim",
       "POST /api/internal/router-agent/jobs/:jobId",
+      "POST /api/internal/router-agent/inventory",
       /**
        * Rota de teste da integracao OLT Cloud -- nao usa sessao de cliente,
        * tem sua propria protecao (x-debug-token + so registrada fora de
@@ -408,6 +410,7 @@ export async function buildApp(container: AppContainer = createContainer()) {
   await registerAdminSellerRoutes(app, container);
   await registerWifiRoutes(app, container);
   await registerRouterWifiRoutes(app, container);
+  await registerAdminRouterWifiRoutes(app, container);
 
   return app;
 }

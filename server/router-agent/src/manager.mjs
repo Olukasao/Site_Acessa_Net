@@ -1,5 +1,5 @@
 import { adapterFor, allAdapters } from "./adapters/registry.mjs";
-import { checkPin, routerHttp } from "./http.mjs";
+import { checkPin, peekCertificate, routerHttp } from "./http.mjs";
 import { ipAllowed, routerBaseUrl } from "./policy.mjs";
 
 const VENDOR_LABEL = { tplink: "TP-Link", huawei: "Huawei", stavix: "Stavix", mercusys: "Mercusys" };
@@ -85,6 +85,39 @@ export class RouterManager {
     return null;
   }
 
+  /**
+   * Inventario SO LEITURA de um contrato: fabricante e modelo, sem login e sem tentar senha.
+   * Fabricante desconhecido guarda o dono/impressao do certificado (dado publico do aparelho) para descobrir novos modelos.
+   */
+  async inventoryOne(contractId) {
+    const entry = (management, extra = {}) => ({ contractId: String(contractId), vendor: null, model: null, management, ...extra });
+    const access = await this.d.sgp.verificaAcesso(contractId);
+    if (!access?.serviceId) return null;
+    if (!access.online) return entry("offline");
+    const conn = await this.d.sgp.connectionStatus(access.serviceId);
+    if (!conn) throw Object.assign(new Error("status do SGP ilegivel"), { code: "SGP_UNAVAILABLE" });
+    if (!conn.online || !conn.ip) return entry("offline");
+    const eq = await this.d.sgp.equipmentType(access.serviceId);
+    if (eq.vendor === "customer_owned") return entry("unsupported", { vendor: "customer_owned" });
+    if (!ipAllowed(conn.ip, this.d.cidrs)) return entry("unreachable", { vendor: eq.vendor });
+    const detected = await this.detectVendor(conn.ip);
+    const vendor = eq.vendor ?? detected;
+    if (vendor) {
+      const adapter = adapterFor(vendor);
+      const baseUrl = routerBaseUrl(conn.ip, vendor, this.d.endpoints, this.d.cidrs);
+      const pins = this.d.endpoints[vendor]?.pins ?? [];
+      if (adapter?.support === "supported" && baseUrl && pins.length) {
+        const id = await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins }) }).catch(() => null);
+        if (id?.model) return entry(adapter.supportsModel?.(id.model) === false ? "requires_validation" : "available", { vendor, model: id.model });
+      }
+      return entry(baseUrl ? "requires_validation" : "requires_validation", { vendor });
+    }
+    // fabricante nao reconhecido: anota o certificado para descobrir (e fixar) novos modelos
+    const probe = Object.entries(this.d.endpoints).find(([, ep]) => ep.protocol === "https");
+    const cert = probe ? await peekCertificate(`https://${conn.ip}:${probe[1].port}`, this.d.routerTimeoutMs) : null;
+    return entry(cert?.ok ? "not_identified" : "unreachable", { certSubject: cert?.subject ?? null, certFp: cert?.fingerprint ?? null });
+  }
+
   statusResult(base, extra = {}) {
     return { online: false, vendor: null, model: null, firmware: null, management: "offline", bands: [], ssids: {}, canChangePassword: false, ...base, ...extra };
   }
@@ -155,7 +188,7 @@ export class RouterManager {
           await report("verifying");
           const verified = await r.adapter.verifyWifiConfiguration(ctx, session, { password: secret.toString("utf8"), bands: job.bands });
           // accepted: o roteador aceitou e a rede continua igual (nao e prova de que a senha mudou; a Central mostra "nao confirmado")
-          return report("completed", { result: { bands: job.bands, verified: verified === true, accepted: true } });
+          return report("completed", { result: { bands: job.bands, verified: verified === true, accepted: true, vendor: VENDOR_LABEL[r.vendor] ?? null, model: r.model ?? null } });
         } catch (error) {
           this.d.log?.warn?.(`[router-agent] troca ${r.vendor}: ${String(error?.message ?? error).slice(0, 160)}`);
           // Depois de mandar a alteracao nao da para saber se o roteador aplicou: nao confirmado (e nunca repetimos sozinhos).

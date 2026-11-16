@@ -8,7 +8,8 @@
     "start": "node --env-file=.env src/main.mjs",
     "keygen": "node scripts/keygen.mjs",
     "set-credential": "node --env-file=.env scripts/set-credential.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "inventory": "node --env-file=.env scripts/inventory.mjs"
   },
   "dependencies": {
     "playwright-core": "1.65.0"

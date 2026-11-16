@@ -30,7 +30,8 @@ import {
   Star,
   MapPin,
   Trophy,
-  Users
+  Users,
+  Wifi
 } from "lucide-react";
 import {
   AdminApiError,
@@ -58,6 +59,7 @@ import {
 	  getAnalyticsOverview,
 	  getBugReport,
 	  getBugReportsSummary,
+	  getRouterWifiOverview,
 	  getCentralAnalytics,
 	  getJobApplicationsSummary,
   listAnalyticsActivity,
@@ -139,6 +141,7 @@ const ADMIN_SECTIONS = [
   { key: "chamados", path: "/admin/chamados", label: "Chamados", icon: Headset },
   { key: "avaliacoes", path: "/admin/avaliacoes", label: "Avaliações", icon: Star },
   { key: "localizacoes", path: "/admin/localizacoes", label: "Localizações", icon: MapPin },
+  { key: "roteadores", path: "/admin/roteadores", label: "Roteadores", icon: Wifi },
   { key: "errosapp", path: "/admin/erros-app", label: "Erros do app", icon: Smartphone },
   { key: "central", path: "/admin/central", label: "Central", icon: BarChart3 },
   { key: "clients", path: "/admin/clientes", label: "Clientes", icon: Users },
@@ -230,8 +233,8 @@ const EVENT_LABELS = {
 
 /** Espelho so-de-leitura do mapa real (server/src/auth/adminPermissions.ts) -- so pra esconder/desabilitar botao na UI; o backend sempre revalida de verdade. */
 const ROLE_PERMISSIONS = {
-  admin: ["avisos.read", "avisos.create", "avisos.update", "avisos.delete", "avisos.publish", "contratacoes.read", "contratacoes.update", "usuarios.manage", "ranking.read", "marketing.manage", "avaliacoes.delete", "localizacoes.review"],
-  editor: ["avisos.read", "avisos.create", "avisos.update", "avisos.publish", "contratacoes.read", "contratacoes.update", "ranking.read", "localizacoes.review"],
+  admin: ["avisos.read", "avisos.create", "avisos.update", "avisos.delete", "avisos.publish", "contratacoes.read", "contratacoes.update", "usuarios.manage", "ranking.read", "marketing.manage", "avaliacoes.delete", "localizacoes.review", "roteadores.read"],
+  editor: ["avisos.read", "avisos.create", "avisos.update", "avisos.publish", "contratacoes.read", "contratacoes.update", "ranking.read", "localizacoes.review", "roteadores.read"],
   viewer: ["avisos.read"],
   vendedor: ["contratacoes.read", "contratacoes.update"]
 };
@@ -298,6 +301,7 @@ function pageTitle(pageKey) {
 	    chamados: "Chamados",
 	    avaliacoes: "Avaliações do atendimento",
 	    localizacoes: "Localização da casa",
+	    roteadores: "Roteadores e Wi-Fi",
 	    errosapp: "Erros do app",
 	    central: "Central do Assinante",
     clients: "Clientes",
@@ -320,6 +324,7 @@ function getPageKey(pathname) {
 	  if (pathname === "/admin/chamados") return "chamados";
 	  if (pathname === "/admin/avaliacoes") return "avaliacoes";
 	  if (pathname === "/admin/localizacoes") return "localizacoes";
+	  if (pathname === "/admin/roteadores") return "roteadores";
 	  if (pathname === "/admin/erros-app") return "errosapp";
 	  if (pathname === "/admin/avisos") return "notices";
 	  if (pathname === "/admin/marketing") return "marketing";
@@ -519,6 +524,8 @@ export default function AdminArea() {
 	            <RatingsPage />
 	          ) : pageKey === "localizacoes" ? (
 	            <LocationsPage />
+	          ) : pageKey === "roteadores" ? (
+	            <RouterWifiPage />
 	          ) : pageKey === "errosapp" ? (
 	            <AppCrashesPage />
 	          ) : pageKey === "clients" ? (
@@ -2881,6 +2888,230 @@ function RatingStars({ value }) {
         <Star key={n} size={14} className={n <= value ? "is-on" : ""} aria-hidden="true" />
       ))}
     </span>
+  );
+}
+
+
+const ROUTER_STATE_LABEL = {
+  pending: "Na fila",
+  connecting: "Conectando",
+  authenticating: "Entrando",
+  updating: "Aplicando",
+  verifying: "Conferindo",
+  completed: "Concluído",
+  failed: "Falhou",
+  unsupported: "Sem suporte",
+  unconfirmed: "Não confirmado"
+};
+const ROUTER_MANAGEMENT_LABEL = {
+  available: "Troca automática disponível",
+  offline: "Desconectado",
+  unsupported: "Não compatível",
+  requires_validation: "Em validação",
+  unreachable: "Sem acesso",
+  not_identified: "Não identificado"
+};
+const ROUTER_ERROR_LABEL = {
+  ROUTER_OFFLINE: "Roteador desconectado",
+  ROUTER_UNSUPPORTED: "Modelo sem suporte",
+  ROUTER_REQUIRES_VALIDATION: "Modelo em validação",
+  ROUTER_UNREACHABLE: "Roteador sem resposta",
+  ROUTER_AUTH_FAILED: "Falha de login no roteador",
+  ROUTER_NOT_IDENTIFIED: "Roteador não identificado",
+  SGP_UNAVAILABLE: "SGP indisponível",
+  CONTRACT_NOT_FOUND: "Contrato não encontrado",
+  VERIFY_FAILED: "Não confirmado",
+  ACCEPTED_NOT_VERIFIED: "Aceito, não conferido",
+  AGENT_UNAVAILABLE: "Agente fora do ar",
+  AGENT_TIMEOUT: "Agente sem resposta",
+  INTERNAL: "Erro interno"
+};
+
+function formatSeconds(value) {
+  if (value === null || value === undefined) return "—";
+  return value < 90 ? `${value}s` : `${Math.round(value / 60)} min`;
+}
+
+/** Painel de roteadores e Wi-Fi: agente, pedidos de troca de senha, taxa por modelo, falhas e inventário (só leitura). */
+function RouterWifiPage() {
+  const [days, setDays] = useState(30);
+  const [vendor, setVendor] = useState("");
+  const [state, setState] = useState("");
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      setData(await getRouterWifiOverview({ days, vendor: vendor || undefined, state: state || undefined }));
+    } catch (caught) {
+      setError(caught instanceof AdminApiError ? caught.message : "Não foi possível carregar agora.");
+    } finally {
+      setLoading(false);
+    }
+  }, [days, vendor, state]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const summary = data?.summary;
+  const models = Object.entries(summary?.byModel || {}).sort((a, b) => b[1].requests - a[1].requests);
+  const failures = Object.entries(summary?.failuresByCode || {}).sort((a, b) => b[1] - a[1]);
+  const vendors = [...new Set((data?.inventory?.counts || []).map((c) => c.vendor).filter(Boolean))];
+
+  return (
+    <div className="admin-page-stack">
+      <div className="admin-page-head">
+        <h2>Roteadores e Wi-Fi</h2>
+        <div className="admin-page-head-actions">
+          <button type="button" className="admin-btn admin-btn-soft" onClick={() => void load()}>
+            <RefreshCw size={15} />
+            Atualizar
+          </button>
+        </div>
+      </div>
+
+      <InlineState loading={loading && !data} error={error} />
+
+      {data ? (
+        <>
+          <div className={`admin-inline-notice ${data.agent.online ? "tone-success" : "tone-warning"}`}>
+            <Wifi size={16} />
+            <span>
+              {!data.enabled ? "Função desligada na Central (ROUTER_WIFI_ENABLED). " : ""}
+              {data.agent.online
+                ? `Agente no ar${data.agent.dryRun ? " em MODO SEGURO (só lê o SGP, não altera roteadores)" : ""}${data.agent.version ? ` · versão ${data.agent.version}` : ""}.`
+                : `Agente fora do ar${data.agent.lastSeenAt ? ` desde ${new Date(data.agent.lastSeenAt).toLocaleString("pt-BR")}` : " (nunca se conectou)"}. Os clientes veem "indisponível agora".`}
+            </span>
+          </div>
+
+          <div className="admin-filter-row">
+            <label>
+              Período
+              <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+                <option value={7}>7 dias</option>
+                <option value={30}>30 dias</option>
+                <option value={90}>90 dias</option>
+              </select>
+            </label>
+            <label>
+              Fabricante
+              <select value={vendor} onChange={(e) => setVendor(e.target.value)}>
+                <option value="">Todos</option>
+                {["Huawei", "TP-Link", "Stavix", "Mercusys", ...vendors.filter((v) => !["huawei", "tplink", "stavix", "mercusys"].includes(String(v).toLowerCase()))].map((v) => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Situação
+              <select value={state} onChange={(e) => setState(e.target.value)}>
+                <option value="">Todas</option>
+                {Object.entries(ROUTER_STATE_LABEL).map(([key, label]) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="admin-metric-grid">
+            <div className="admin-metric"><span>Pedidos de troca</span><strong>{formatNumber(summary.requests)}</strong></div>
+            <div className="admin-metric"><span>Aceitos pelo roteador</span><strong>{summary.acceptedRate === null ? "—" : `${summary.acceptedRate}%`}</strong></div>
+            <div className="admin-metric"><span>Cliente confirmou</span><strong>{formatNumber(summary.confirmedByCustomer)}</strong></div>
+            <div className="admin-metric"><span>Não conectou (chamado)</span><strong>{formatNumber(summary.notConnected)}</strong></div>
+            <div className="admin-metric"><span>Esperando o cliente</span><strong>{formatNumber(summary.awaitingCustomer)}</strong></div>
+            <div className="admin-metric"><span>Falhas</span><strong>{formatNumber(summary.failed + summary.unsupported)}</strong></div>
+            <div className="admin-metric"><span>Tempo médio</span><strong>{formatSeconds(summary.avgSeconds)}</strong></div>
+          </div>
+
+          <div className="admin-rating-columns">
+            <section className="admin-panel">
+              <h3>Taxa de sucesso por modelo</h3>
+              {models.length === 0 ? <p className="admin-muted">Nenhum pedido no período.</p> : (
+                <div className="admin-table-wrap">
+                  <table className="admin-table">
+                    <thead><tr><th>Modelo</th><th>Pedidos</th><th>Aceitos</th><th>Falhas</th></tr></thead>
+                    <tbody>
+                      {models.map(([name, row]) => (
+                        <tr key={name}>
+                          <td>{name}</td>
+                          <td>{formatNumber(row.requests)}</td>
+                          <td>{Math.round((row.accepted / row.requests) * 100)}%</td>
+                          <td>{formatNumber(row.failed)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <section className="admin-panel">
+              <h3>Falhas por motivo</h3>
+              {failures.length === 0 ? <p className="admin-muted">Nenhuma falha no período.</p> : (
+                <div className="admin-bar-list">
+                  {failures.map(([code, total]) => (
+                    <div className="admin-bar-row" key={code}>
+                      <span>{ROUTER_ERROR_LABEL[code] || code}</span>
+                      <strong>{formatNumber(total)}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+
+          <section className="admin-panel">
+            <h3>Roteadores identificados (inventário){data.inventory.total ? ` · ${formatNumber(data.inventory.total)}` : ""}</h3>
+            {data.inventory.total === 0 ? (
+              <p className="admin-muted">Ainda sem inventário. Rode <code>npm run inventory -- contratos.txt</code> no agente (só leitura, fora do horário de pico).</p>
+            ) : (
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead><tr><th>Fabricante</th><th>Modelo</th><th>Situação</th><th>Clientes</th></tr></thead>
+                  <tbody>
+                    {data.inventory.counts.map((row, index) => (
+                      <tr key={`${row.vendor}-${row.model}-${row.management}-${index}`}>
+                        <td>{row.vendor || "Não identificado"}</td>
+                        <td>{row.model || "—"}</td>
+                        <td>{ROUTER_MANAGEMENT_LABEL[row.management] || row.management}</td>
+                        <td>{formatNumber(row.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="admin-panel">
+            <h3>Últimas solicitações</h3>
+            {data.items.length === 0 ? <p className="admin-muted">Nada para mostrar com esses filtros.</p> : (
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead><tr><th>Quando</th><th>Contrato</th><th>Tipo</th><th>Redes</th><th>Situação</th><th>Motivo</th></tr></thead>
+                  <tbody>
+                    {data.items.map((item) => (
+                      <tr key={item.id}>
+                        <td>{new Date(item.createdAt).toLocaleString("pt-BR")}</td>
+                        <td>{item.contractId}</td>
+                        <td>{item.kind === "change_password" ? "Troca de senha" : "Leitura"}</td>
+                        <td>{item.bands.join(" e ") || "—"}</td>
+                        <td>{ROUTER_STATE_LABEL[item.state] || item.state}{item.confirmation === "connected" ? " · cliente confirmou" : item.confirmation === "not_connected" ? ` · não conectou${item.ticketProtocol ? ` (${item.ticketProtocol})` : ""}` : ""}</td>
+                        <td>{item.errorCode ? ROUTER_ERROR_LABEL[item.errorCode] || item.errorCode : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
+    </div>
   );
 }
 

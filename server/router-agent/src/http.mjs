@@ -19,6 +19,24 @@ function pinnedAgent() {
   return new https.Agent({ keepAlive: false, rejectUnauthorized: false });
 }
 
+/** Dados publicos do certificado do roteador (dono e impressao digital), sem enviar nada alem do aperto de mao TLS. */
+export function peekCertificate(baseUrl, timeoutMs = 8000) {
+  const u = new URL(baseUrl);
+  return new Promise((resolve) => {
+    const socket = tls.connect({ host: u.hostname, port: Number(u.port || 443), rejectUnauthorized: false, timeout: timeoutMs }, () => {
+      const cert = socket.getPeerCertificate();
+      socket.end();
+      const label = [cert?.subject?.O, cert?.subject?.CN].filter(Boolean).join(" / ").slice(0, 120);
+      resolve({ ok: true, subject: label || null, fingerprint: fingerprintOf(cert) || null });
+    });
+    socket.on("error", () => resolve({ ok: false, subject: null, fingerprint: null }));
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve({ ok: false, subject: null, fingerprint: null });
+    });
+  });
+}
+
 /** Le o certificado e confere o pin, sem mandar nada alem do aperto de mao TLS. */
 export function checkPin(baseUrl, pins, timeoutMs = 8000) {
   const u = new URL(baseUrl);

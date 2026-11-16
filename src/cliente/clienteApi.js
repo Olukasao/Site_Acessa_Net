@@ -219,7 +219,8 @@ function resolveDemoRequest(method, fullPath, body) {
   }
 
   if (path.startsWith("/api/customer/wifi/")) {
-    if (method === "GET" && path === "/api/customer/wifi/status") return { available: false, job: null };
+    if (method === "GET" && path === "/api/customer/wifi/status") return { available: false, agentOnline: false, job: null, pendingChange: null };
+    if (method === "GET" && path === "/api/customer/wifi/availability") return { available: false, agentOnline: false };
     throw new ClienteApiError(409, "DEMO_MODE", "Alteração do Wi-Fi não está disponível no modo demonstração.");
   }
 
@@ -943,6 +944,16 @@ export async function getWifiStatus(contractId, signal) {
 /** Pede a troca da senha do Wi-Fi. So contrato, redes e senhas: o servidor descobre o roteador sozinho. */
 export async function changeWifiPassword({ contractId, newPassword, bands, currentPassword }) {
   return clienteRequest("/api/customer/wifi/password", { method: "POST", body: { contractId, newPassword, bands, currentPassword } });
+}
+
+/** So pergunta se a troca automatica esta disponivel agora (nao cria tarefa nem consulta o roteador). */
+export async function getWifiAvailability(contractId, signal) {
+  return clienteRequest(`/api/customer/wifi/availability?contractId=${encodeURIComponent(contractId)}`, { signal });
+}
+
+/** "Conseguiu conectar?" depois da troca: sim fecha o pedido; nao abre o chamado com o historico (sem a senha). */
+export async function confirmWifiChange(jobId, connected) {
+  return clienteRequest(`/api/customer/wifi/jobs/${encodeURIComponent(jobId)}/confirm`, { method: "POST", body: { connected } });
 }
 
 export async function getWifiJob(jobId, signal) {

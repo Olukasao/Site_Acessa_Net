@@ -29,7 +29,16 @@ async function setup(over: Partial<{ enabled: boolean; pilotContracts: string[];
     hash === cpfHash ? ({ cpfHash, passwordHash: await hashPassword("Senha-Central-1") } as never) : null
   );
   const auth = `Bearer ${container.localPasswordAuthService.tokens.issueAccessToken("customer_A", "sess_A")}`;
-  return { container, app, auth };
+  // ganchos falsos: nada de SGP, FCM ou SMTP nos testes
+  const tickets: Array<{ contractId: string; description: string }> = [];
+  const notified: string[] = [];
+  (container.routerWifiService as unknown as { hooks: unknown }).hooks = {
+    openTicket: async (input: { contractId: string; description: string }) => (tickets.push(input), { protocol: "261116000001" }),
+    notifyChanged: async (job: { id: string }) => void notified.push(job.id)
+  };
+  // agente no ar: cada busca de tarefas e o sinal de vida
+  await container.routerWifiJobs.touchAgent("a1", true, "t", new Date());
+  return { container, app, auth, tickets, notified };
 }
 
 const agent = { authorization: `Bearer ${TOKEN}` };
@@ -58,7 +67,7 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
 
     const off = await setup({ enabled: false });
     const r = await off.app.inject({ method: "GET", url: "/api/customer/wifi/status?contractId=1001", headers: { authorization: off.auth }, remoteAddress: freshIp() });
-    expect(r.json()).toEqual({ available: false, job: null });
+    expect(r.json()).toMatchObject({ available: false, job: null });
     const p = await off.app.inject({ method: "POST", url: "/api/customer/wifi/password", headers: { authorization: off.auth }, payload: change(), remoteAddress: freshIp() });
     expect(p.statusCode).toBe(404);
     await app.close();
@@ -175,6 +184,127 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
     const fresh = await app.inject({ method: "GET", url: "/api/customer/wifi/status?contractId=1001", headers: { authorization: auth }, remoteAddress: freshIp() });
     expect(fresh.json().job).toMatchObject({ id: jobId, state: "completed" });
     await app.close();
+  });
+
+
+  it("agente fora do ar: a tela avisa 'indisponível agora' e a troca é recusada sem criar tarefa", async () => {
+    const { app, auth, container } = await setup();
+    // sinal velho (agente caiu)
+    await container.routerWifiJobs.touchAgent("a1", true, "t", new Date(Date.now() - 5 * 60_000));
+    const st = await app.inject({ method: "GET", url: "/api/customer/wifi/status?contractId=1001", headers: { authorization: auth }, remoteAddress: freshIp() });
+    expect(st.json()).toMatchObject({ available: true, agentOnline: false, job: null });
+    const av = await app.inject({ method: "GET", url: "/api/customer/wifi/availability?contractId=1001", headers: { authorization: auth }, remoteAddress: freshIp() });
+    expect(av.json()).toEqual({ available: true, agentOnline: false });
+    const ch = await app.inject({ method: "POST", url: "/api/customer/wifi/password", headers: { authorization: auth }, payload: change(), remoteAddress: freshIp() });
+    expect(ch.statusCode).toBe(503);
+    expect(await container.routerWifiJobs.list(10)).toHaveLength(0);
+    // o agente volta: a busca de tarefas já é o sinal de vida
+    await app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1", dryRun: false, version: "0.2" }, remoteAddress: freshIp() });
+    const back = await app.inject({ method: "GET", url: "/api/customer/wifi/availability?contractId=1001", headers: { authorization: auth }, remoteAddress: freshIp() });
+    expect(back.json()).toEqual({ available: true, agentOnline: true });
+    await app.close();
+  });
+
+  async function changeAccepted(ctx: Awaited<ReturnType<typeof setup>>) {
+    const { app, auth } = ctx;
+    const jobId = (await app.inject({ method: "POST", url: "/api/customer/wifi/password", headers: { authorization: auth }, payload: change(), remoteAddress: freshIp() })).json().job.id as string;
+    await app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1" }, remoteAddress: freshIp() });
+    await app.inject({ method: "POST", url: `/api/internal/router-agent/jobs/${jobId}`, headers: agent, payload: { agentId: "a1", state: "completed", result: { bands: ["5GHz"], verified: false, accepted: true, vendor: "Huawei", model: "EG8145V5-V2" } }, remoteAddress: freshIp() });
+    return jobId;
+  }
+
+  it("aviso de senha alterada: uma vez só, quando o roteador aceita; falha não avisa", async () => {
+    const ctx = await setup();
+    const jobId = await changeAccepted(ctx);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(ctx.notified).toEqual([jobId]);
+    // a tarefa seguinte falha: sem aviso
+    const j2 = (await ctx.app.inject({ method: "POST", url: "/api/customer/wifi/password", headers: { authorization: ctx.auth }, payload: change(), remoteAddress: freshIp() })).json().job.id;
+    await ctx.app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1" }, remoteAddress: freshIp() });
+    await ctx.app.inject({ method: "POST", url: `/api/internal/router-agent/jobs/${j2}`, headers: agent, payload: { agentId: "a1", state: "failed", errorCode: "ROUTER_UNREACHABLE" }, remoteAddress: freshIp() });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(ctx.notified).toEqual([jobId]);
+    await ctx.app.close();
+  });
+
+  it("'Conseguiu conectar?': sim fecha o pedido; só vale uma vez; é só do titular", async () => {
+    const ctx = await setup();
+    const jobId = await changeAccepted(ctx);
+    const pending = await ctx.app.inject({ method: "GET", url: "/api/customer/wifi/status?contractId=1001", headers: { authorization: ctx.auth }, remoteAddress: freshIp() });
+    expect(pending.json().pendingChange).toMatchObject({ id: jobId, needsConfirmation: true });
+    const yes = await ctx.app.inject({ method: "POST", url: `/api/customer/wifi/jobs/${jobId}/confirm`, headers: { authorization: ctx.auth }, payload: { connected: true }, remoteAddress: freshIp() });
+    expect(yes.statusCode).toBe(200);
+    expect(yes.json().job).toMatchObject({ state: "completed", confirmation: "connected", needsConfirmation: false });
+    expect(ctx.tickets).toHaveLength(0);
+    // segunda resposta: recusada
+    expect((await ctx.app.inject({ method: "POST", url: `/api/customer/wifi/jobs/${jobId}/confirm`, headers: { authorization: ctx.auth }, payload: { connected: false }, remoteAddress: freshIp() })).statusCode).toBe(409);
+    // sem login e campo extra
+    expect((await ctx.app.inject({ method: "POST", url: `/api/customer/wifi/jobs/${jobId}/confirm`, payload: { connected: true }, remoteAddress: freshIp() })).statusCode).toBe(401);
+    expect((await ctx.app.inject({ method: "POST", url: `/api/customer/wifi/jobs/${jobId}/confirm`, headers: { authorization: ctx.auth }, payload: { connected: true, ticket: "x" }, remoteAddress: freshIp() })).statusCode).toBe(400);
+    await ctx.app.close();
+  });
+
+  it("'Não conectou' abre o chamado com o histórico, sem a senha, e guarda o protocolo", async () => {
+    const ctx = await setup();
+    const jobId = await changeAccepted(ctx);
+    const no = await ctx.app.inject({ method: "POST", url: `/api/customer/wifi/jobs/${jobId}/confirm`, headers: { authorization: ctx.auth }, payload: { connected: false }, remoteAddress: freshIp() });
+    expect(no.statusCode).toBe(200);
+    expect(no.json()).toMatchObject({ ticketOpened: true, job: { confirmation: "not_connected", ticketProtocol: "261116000001", state: "unconfirmed", needsConfirmation: false } });
+    expect(no.json().job.message).toContain("261116000001");
+    expect(ctx.tickets).toHaveLength(1);
+    expect(ctx.tickets[0]!.contractId).toBe("1001");
+    expect(ctx.tickets[0]!.description).toMatch(/NAO conseguiu conectar/);
+    expect(ctx.tickets[0]!.description).not.toContain("Casa-Nova");
+    await ctx.app.close();
+  });
+
+  it("outro cliente não confirma o pedido alheio", async () => {
+    const ctx = await setup();
+    const jobId = await changeAccepted(ctx);
+    const cpfHash = sha256("B");
+    await ctx.container.authSessions.create({ id: "sess_B", sessionTokenHash: "h2", customerId: "customer_B", cpfHash, expiresAt: new Date(Date.now() + 3_600_000) } as never);
+    const authB = `Bearer ${ctx.container.localPasswordAuthService.tokens.issueAccessToken("customer_B", "sess_B")}`;
+    const r = await ctx.app.inject({ method: "POST", url: `/api/customer/wifi/jobs/${jobId}/confirm`, headers: { authorization: authB }, payload: { connected: false }, remoteAddress: freshIp() });
+    expect(r.statusCode).toBe(404);
+    expect(ctx.tickets).toHaveLength(0);
+    await ctx.app.close();
+  });
+
+  it("inventário e painel: recebe do agente, resume por modelo e mostra taxa de sucesso", async () => {
+    const ctx = await setup();
+    await changeAccepted(ctx);
+    const entries = [
+      { contractId: "10050", vendor: "Huawei", model: "EG8145V5-V2", management: "available" },
+      { contractId: "19611", vendor: "Huawei", model: "EG8145V5-V2", management: "available" },
+      { contractId: "3005", vendor: null, model: null, management: "not_identified", certSubject: "TP-Link", certFp: "a".repeat(64) }
+    ];
+    const bad = await ctx.app.inject({ method: "POST", url: "/api/internal/router-agent/inventory", headers: agent, payload: { agentId: "a1", entries: [{ ...entries[0], ssid: "x" }] }, remoteAddress: freshIp() });
+    expect(bad.statusCode).toBe(400);
+    const ok = await ctx.app.inject({ method: "POST", url: "/api/internal/router-agent/inventory", headers: agent, payload: { agentId: "a1", entries }, remoteAddress: freshIp() });
+    expect(ok.json()).toEqual({ saved: 3 });
+    const summary = await ctx.container.routerWifiService.adminOverview(30);
+    expect(summary.inventory.total).toBe(3);
+    expect(summary.inventory.counts[0]).toMatchObject({ vendor: "Huawei", model: "EG8145V5-V2", total: 2 });
+    expect(summary.summary).toMatchObject({ requests: 1, accepted: 1, acceptedRate: 100, awaitingCustomer: 1 });
+    expect(summary.summary.byModel["Huawei EG8145V5-V2"]).toEqual({ requests: 1, accepted: 1, failed: 0 });
+    expect(summary.agent.online).toBe(true);
+    // painel: sem login 401; visualizador 403; admin e editor veem
+    expect((await ctx.app.inject({ method: "GET", url: "/admin/api/roteadores", remoteAddress: freshIp() })).statusCode).toBe(401);
+    const adminToken = async (role: "admin" | "editor" | "viewer") => {
+      const email = `${role}@acessanet.test`;
+      await ctx.container.adminUsers.create({ id: `adm_${role}`, email, name: role, passwordHash: await hashPassword("Senha-de-teste-123"), role });
+      const login = await ctx.app.inject({ method: "POST", url: "/admin/api/auth/login", payload: { email, password: "Senha-de-teste-123" }, remoteAddress: freshIp() });
+      return `Bearer ${login.json().accessToken as string}`;
+    };
+    expect((await ctx.app.inject({ method: "GET", url: "/admin/api/roteadores", headers: { authorization: await adminToken("viewer") }, remoteAddress: freshIp() })).statusCode).toBe(403);
+    for (const role of ["admin", "editor"] as const) {
+      const r = await ctx.app.inject({ method: "GET", url: "/admin/api/roteadores?days=7", headers: { authorization: await adminToken(role) }, remoteAddress: freshIp() });
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toMatchObject({ agent: { online: true }, summary: { requests: 1 }, inventory: { total: 3 } });
+      // nada de senha, ip ou id interno do cliente na resposta do painel
+      expect(JSON.stringify(r.json())).not.toMatch(/customer_A|secretEnc|Casa-Nova/);
+    }
+    await ctx.app.close();
   });
 
   it("sem token de agente as rotas do agente não existem", async () => {

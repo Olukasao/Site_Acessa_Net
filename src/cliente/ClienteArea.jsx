@@ -88,6 +88,7 @@ import {
 import NoticeBanner from "./central/NoticeBanner";
 import VisitLocationCard from "./central/VisitLocationCard";
 import WifiManagerCard from "./central/WifiManagerCard";
+import WifiOfferCard from "./central/WifiOfferCard";
 import ToastHost, { showToast } from "./central/Toast";
 import { LocationCaptureField, isNativeApp, submitLocation } from "./central/locationCapture";
 import NetworkIncidentBanner from "./central/NetworkIncidentBanner";
@@ -3231,6 +3232,7 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
               onAnswer={(value) => void handleQuestionAnswer(value)}
               onBack={resetAttendanceFlow}
               selectedCategory={selectedCategory}
+              selectedContractId={selectedContract?.id}
               textAnswer={textAnswer}
               onTextAnswerChange={setTextAnswer}
             />
@@ -3784,7 +3786,7 @@ function RouterPasswordRequirements({ value }) {
   );
 }
 
-function AttendanceDetailsStep({ diagnosis, loading, onAnswer, onBack, onTextAnswerChange, selectedCategory, textAnswer }) {
+function AttendanceDetailsStep({ diagnosis, loading, onAnswer, onBack, onTextAnswerChange, selectedCategory, selectedContractId, textAnswer }) {
   const question = diagnosis?.question;
   const isRouterPassword = question?.id === "router_password_new";
   const routerPasswordError = isRouterPassword ? validateRouterPasswordClientSide(textAnswer) : "";
@@ -3792,6 +3794,7 @@ function AttendanceDetailsStep({ diagnosis, loading, onAnswer, onBack, onTextAns
   return (
     <div className="cliente-attendance-step-panel">
       <SelectedIssueSummary category={selectedCategory} />
+      {selectedCategory?.id === "router_password" ? <WifiOfferCard contractId={selectedContractId} /> : null}
       {loading && !question ? <LoadingInline label="Preparando perguntas da triagem" /> : null}
       {diagnosis?.customerMessage ? (
         <InlineNotice tone="info" title="Triagem AcessaNet" message={diagnosis.customerMessage} />

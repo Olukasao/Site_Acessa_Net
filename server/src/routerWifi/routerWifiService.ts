@@ -11,6 +11,7 @@ import {
   ROUTER_JOB_FINAL,
   ROUTER_JOB_PROGRESS,
   isFinalState,
+  type InventoryEntry,
   type RouterJobRecord,
   type RouterJobState,
   type RouterWifiRepository,
@@ -36,6 +37,11 @@ const RUNNING_MAX_MS = 4 * 60_000;
 /** Leitura do roteador reaproveitada por este tempo (a tela nao dispara uma nova a cada abertura). */
 const STATUS_FRESH_MS = 5 * 60_000;
 
+/** O agente busca tarefas a cada poucos segundos; sem sinal por mais que isto ele esta fora do ar. */
+const AGENT_ONLINE_MS = 45_000;
+/** Quanto tempo o cliente tem para responder "Conseguiu conectar?". */
+const CONFIRM_WINDOW_MS = 24 * 60 * 60_000;
+
 const CHANGE_PER_CUSTOMER = { limit: 3, windowMs: 60 * 60_000 };
 const CHANGE_PER_CONTRACT = { limit: 5, windowMs: 24 * 60 * 60_000 };
 const CHANGE_PER_IP = { limit: 10, windowMs: 60 * 60_000 };
@@ -56,6 +62,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   ACCEPTED_NOT_VERIFIED: "O roteador aceitou a nova senha. Conecte seus aparelhos com ela; se não funcionar, abra um atendimento.",
   AGENT_UNAVAILABLE: "O serviço de Wi-Fi está indisponível agora. Tente de novo em alguns minutos.",
   AGENT_TIMEOUT: "Não recebemos a confirmação do roteador. Teste a nova senha; se não funcionar, abra um atendimento.",
+  AGENT_OFFLINE: "O serviço de Wi-Fi está fora do ar agora. Tente de novo em alguns minutos.",
   INTERNAL: "Não foi possível concluir agora. Tente de novo mais tarde."
 };
 const ERROR_CODES = Object.keys(ERROR_MESSAGES) as [string, ...string[]];
@@ -87,7 +94,7 @@ const statusResultSchema = z
     canChangePassword: z.boolean()
   })
   .strict();
-const changeResultSchema = z.object({ bands: z.array(bandSchema).max(2), verified: z.boolean(), accepted: z.boolean().optional() }).strict();
+const changeResultSchema = z.object({ bands: z.array(bandSchema).max(2), verified: z.boolean(), accepted: z.boolean().optional(), vendor: text(32).nullable().optional(), model: text(64).nullable().optional() }).strict();
 
 export const agentReportSchema = z
   .object({
@@ -119,10 +126,22 @@ export interface PublicRouterJob {
   message: string;
   errorCode: string | null;
   result: Record<string, unknown> | null;
+  /** O cliente ainda precisa dizer se conseguiu conectar ("Conseguiu conectar?"). */
+  needsConfirmation: boolean;
+  confirmation: "connected" | "not_connected" | null;
+  ticketProtocol: string | null;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
 }
+
+const awaitsCustomer = (job: RouterJobRecord) =>
+  job.kind === "change_password" &&
+  job.state === "unconfirmed" &&
+  !job.customerConfirmation &&
+  (job.errorCode === "ACCEPTED_NOT_VERIFIED" || job.errorCode === "VERIFY_FAILED") &&
+  Boolean(job.finishedAt) &&
+  Date.now() - Date.parse(job.finishedAt!) < CONFIRM_WINDOW_MS;
 
 export function publicJob(job: RouterJobRecord): PublicRouterJob {
   return {
@@ -131,9 +150,21 @@ export function publicJob(job: RouterJobRecord): PublicRouterJob {
     state: job.state,
     done: isFinalState(job.state),
     bands: job.bands,
-    message: job.errorCode ? ERROR_MESSAGES[job.errorCode] ?? STATE_MESSAGES[job.state] : STATE_MESSAGES[job.state],
+    message:
+      job.customerConfirmation === "not_connected"
+        ? job.ticketProtocol
+          ? `Abrimos o chamado ${job.ticketProtocol} para nossa equipe resolver.`
+          : "Registramos que você não conseguiu conectar."
+        : job.errorCode
+          ? ERROR_MESSAGES[job.errorCode] ?? STATE_MESSAGES[job.state]
+          : job.customerConfirmation === "connected"
+            ? "Pronto! Você confirmou que o Wi-Fi conectou com a nova senha."
+            : STATE_MESSAGES[job.state],
     errorCode: job.errorCode,
     result: job.result,
+    needsConfirmation: awaitsCustomer(job),
+    confirmation: job.customerConfirmation,
+    ticketProtocol: job.ticketProtocol,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     finishedAt: job.finishedAt
@@ -151,6 +182,14 @@ export function loadAgentPublicKey(pem: string | undefined): KeyObject | null {
   }
 }
 
+/** Ligacoes com o resto da Central (chamado e avisos), injetadas para o servico ser testavel sem SGP, FCM ou SMTP. */
+export interface RouterWifiHooks {
+  /** Abre o chamado de "nao consegui conectar" (sem a senha) e devolve o protocolo. */
+  openTicket(input: { customerId: string; contractId: string; description: string }): Promise<{ protocol: string }>;
+  /** Avisa o titular que a senha do Wi-Fi mudou (push e e-mail). Nunca lanca. */
+  notifyChanged(job: RouterJobRecord): Promise<void>;
+}
+
 export class RouterWifiService {
   private readonly ownership: OwnershipService;
   private readonly publicKey: KeyObject | null;
@@ -161,7 +200,8 @@ export class RouterWifiService {
     private readonly authProfiles: AuthProfileRepository,
     private readonly limiter: PersistentRateLimiter,
     store: InMemoryStore,
-    sgpClient: SgpUraClient
+    sgpClient: SgpUraClient,
+    private readonly hooks?: RouterWifiHooks
   ) {
     this.ownership = new OwnershipService(store, sgpClient);
     this.publicKey = loadAgentPublicKey(config.agentPublicKey);
@@ -173,6 +213,19 @@ export class RouterWifiService {
     return this.config.pilotContracts.length === 0 || this.config.pilotContracts.includes(contractId);
   }
 
+  /** O agente interno mandou sinal de vida nos ultimos segundos? */
+  async agentOnline(): Promise<boolean> {
+    const last = await this.repo.lastAgent();
+    return Boolean(last && Date.now() - Date.parse(last.lastSeenAt) < AGENT_ONLINE_MS);
+  }
+
+  /** Para a tela decidir se oferece a troca (nao cria tarefa nem consulta o roteador). */
+  async availability(customerId: string, contractId: string) {
+    await this.ownership.assertContract(customerId, contractId);
+    if (!this.availableFor(contractId)) return { available: false, agentOnline: false };
+    return { available: true, agentOnline: await this.agentOnline() };
+  }
+
   private async expire() {
     await this.repo.expireStale(new Date(), PENDING_MAX_MS, RUNNING_MAX_MS);
   }
@@ -180,15 +233,19 @@ export class RouterWifiService {
   /** Leitura do roteador do contrato (modelo, redes, se da para trocar a senha). Cria uma tarefa se nao houver leitura recente. */
   async status(customerId: string, contractId: string) {
     await this.ownership.assertContract(customerId, contractId);
-    if (!this.availableFor(contractId)) return { available: false as const, job: null };
+    if (!this.availableFor(contractId)) return { available: false as const, agentOnline: false, job: null, pendingChange: null };
     await this.expire();
+    const awaiting = await this.repo.findAwaitingConfirmation(contractId, new Date(Date.now() - CONFIRM_WINDOW_MS));
+    const pendingChange = awaiting && awaiting.customerId === customerId ? publicJob(awaiting) : null;
+    // Agente fora do ar: nao cria tarefa que ficaria presa; a tela mostra "indisponivel agora".
+    if (!(await this.agentOnline())) return { available: true as const, agentOnline: false, job: null, pendingChange };
     const open = await this.repo.findOpen(contractId, "status");
-    if (open) return { available: true as const, job: publicJob(open) };
+    if (open) return { available: true as const, agentOnline: true, job: publicJob(open), pendingChange };
     const last = await this.repo.latestFinished(contractId, "status");
-    if (last?.finishedAt && Date.now() - Date.parse(last.finishedAt) < STATUS_FRESH_MS) return { available: true as const, job: publicJob(last) };
+    if (last?.finishedAt && Date.now() - Date.parse(last.finishedAt) < STATUS_FRESH_MS) return { available: true as const, agentOnline: true, job: publicJob(last), pendingChange };
     await this.limiter.consume(`router_wifi:status:contract:${contractId}`, STATUS_PER_CONTRACT);
     const job = await this.repo.create({ customerId, contractId, kind: "status", bands: [], secretEnc: null });
-    return { available: true as const, job: publicJob(job) };
+    return { available: true as const, agentOnline: true, job: publicJob(job), pendingChange };
   }
 
   /** Redes da ultima leitura concluida (sem criar tarefa). */
@@ -211,6 +268,8 @@ export class RouterWifiService {
   }) {
     await this.ownership.assertContract(input.customerId, input.contractId);
     if (!this.availableFor(input.contractId)) throw new AppError(404, "WIFI_MANAGER_UNAVAILABLE", "A alteração do Wi-Fi pela Central ainda não está disponível para você.");
+
+    if (!(await this.agentOnline())) throw new AppError(503, "WIFI_AGENT_OFFLINE", ERROR_MESSAGES.AGENT_OFFLINE!);
 
     const problem = validateWifiPassword(input.newPassword);
     if (problem) throw new AppError(422, "INVALID_WIFI_PASSWORD", problem);
@@ -252,7 +311,9 @@ export class RouterWifiService {
 
   // ---------- agente interno ----------
 
-  async claim(agentId: string, max: number) {
+  async claim(agentId: string, max: number, info: { dryRun?: boolean | undefined; version?: string | undefined } = {}) {
+    // cada busca de tarefas e o sinal de vida do agente
+    await this.repo.touchAgent(agentId, info.dryRun ?? true, info.version ?? null, new Date());
     await this.expire();
     const jobs = await this.repo.claim(agentId, Math.min(Math.max(1, max), 10), new Date());
     // O agente recebe so o contrato e o segredo cifrado; nada de cliente/CPF.
@@ -284,7 +345,101 @@ export class RouterWifiService {
 
     const ok = await this.repo.update(jobId, agentId, { state: finalState, result, errorCode: finalError, now: new Date() });
     if (!ok) throw new AppError(409, "JOB_ALREADY_FINISHED", "A tarefa já terminou.");
+    // Senha trocada (confirmada ou aceita pelo roteador): avisa o titular, uma vez, sem atrasar a resposta ao agente.
+    if (job.kind === "change_password" && (finalState === "completed" || finalError === "ACCEPTED_NOT_VERIFIED")) {
+      void this.notifyOnce(jobId).catch(() => undefined);
+    }
     return { ok: true, state: finalState };
+  }
+
+  private async notifyOnce(jobId: string) {
+    if (!this.hooks) return;
+    if (!(await this.repo.markNotified(jobId, new Date()))) return;
+    const job = await this.repo.findById(jobId);
+    if (job) await this.hooks.notifyChanged(job);
+  }
+
+  /** "Conseguiu conectar?": sim fecha o pedido; nao abre o chamado (sem a senha) e guarda o numero do protocolo no pedido. */
+  async confirm(input: { customerId: string; jobId: string; connected: boolean }) {
+    const job = await this.repo.findById(input.jobId);
+    if (!job || job.customerId !== input.customerId || job.kind !== "change_password") throw new AppError(404, "RESOURCE_NOT_FOUND", "Solicitação não encontrada.");
+    await this.ownership.assertContract(input.customerId, job.contractId);
+    if (!awaitsCustomer(job)) throw new AppError(409, "WIFI_NOTHING_TO_CONFIRM", "Esta alteração não está esperando confirmação.");
+
+    const done = await this.repo.confirm(job.id, input.customerId, input.connected ? "connected" : "not_connected", new Date());
+    if (!done) throw new AppError(409, "WIFI_ALREADY_CONFIRMED", "Você já respondeu sobre esta alteração.");
+
+    if (!input.connected) {
+      const bands = job.bands.join(" e ");
+      const when = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(job.finishedAt ?? job.updatedAt));
+      const description = [
+        "Cliente pediu a troca da senha do Wi-Fi pela Central e disse que NAO conseguiu conectar com a nova senha.",
+        `Redes: ${bands}.`,
+        `Troca feita pelo sistema em ${when}; o roteador aceitou o pedido, mas a senha nao pode ser conferida automaticamente.`,
+        "A senha nova NAO esta neste chamado. Entrar em contato com o cliente e ajustar a senha do Wi-Fi."
+      ].join("\n");
+      try {
+        const ticket = await this.hooks?.openTicket({ customerId: input.customerId, contractId: job.contractId, description });
+        if (ticket) await this.repo.setTicket(job.id, ticket.protocol);
+      } catch (error) {
+        // O chamado nao abriu agora: a resposta do cliente fica gravada e a tela oferece o atendimento manual.
+        const fresh = await this.repo.findById(job.id);
+        return { job: publicJob(fresh ?? job), ticketOpened: false, error: error instanceof AppError ? error.message : "Não foi possível abrir o chamado agora." };
+      }
+    }
+    const fresh = await this.repo.findById(job.id);
+    return { job: publicJob(fresh ?? job), ticketOpened: !input.connected };
+  }
+
+  // ---------- inventario e painel ----------
+
+  async saveInventory(entries: InventoryEntry[]) {
+    return this.repo.upsertInventory(entries, new Date());
+  }
+
+  /** Painel administrativo: resumo do periodo, ultimas solicitacoes e inventario. */
+  async adminOverview(days: number, filter: { vendor?: string | undefined; state?: string | undefined } = {}) {
+    const since = new Date(Date.now() - days * 24 * 60 * 60_000);
+    const jobs = await this.repo.listSince(since, 5000);
+    const changes = jobs.filter((j) => j.kind === "change_password");
+    const finished = changes.filter((j) => isFinalState(j.state));
+    const durations = finished.filter((j) => j.finishedAt).map((j) => Date.parse(j.finishedAt!) - Date.parse(j.createdAt)).filter((ms) => ms >= 0);
+    const failuresByCode: Record<string, number> = {};
+    for (const j of jobs) if (j.errorCode && (j.state === "failed" || j.state === "unsupported" || j.state === "unconfirmed")) failuresByCode[j.errorCode] = (failuresByCode[j.errorCode] ?? 0) + 1;
+    const accepted = changes.filter((j) => j.state === "completed" || j.errorCode === "ACCEPTED_NOT_VERIFIED").length;
+    // taxa por fabricante/modelo: o agente informa vendor/model em cada resultado
+    const byModel: Record<string, { requests: number; accepted: number; failed: number }> = {};
+    for (const j of changes) {
+      const r = j.result as { vendor?: string | null; model?: string | null } | null;
+      const key = [r?.vendor, r?.model].filter(Boolean).join(" ") || "Não identificado";
+      const row = (byModel[key] ??= { requests: 0, accepted: 0, failed: 0 });
+      row.requests++;
+      if (j.state === "completed" || j.errorCode === "ACCEPTED_NOT_VERIFIED") row.accepted++;
+      else if (j.state === "failed" || j.state === "unsupported") row.failed++;
+    }
+    const rows = (await Promise.all(jobs.slice(0, 200).map(async (j) => ({ ...publicJob(j), contractId: j.contractId, vendor: (j.result as { vendor?: string } | null)?.vendor ?? null, model: (j.result as { model?: string } | null)?.model ?? null }))))
+      .filter((j) => (!filter.state || j.state === filter.state) && (!filter.vendor || j.vendor === filter.vendor));
+    const agent = await this.repo.lastAgent();
+    return {
+      agent: { online: await this.agentOnline(), lastSeenAt: agent?.lastSeenAt ?? null, dryRun: agent?.dryRun ?? null, version: agent?.version ?? null },
+      enabled: this.config.enabled,
+      summary: {
+        days,
+        requests: changes.length,
+        accepted,
+        acceptedRate: changes.length ? Math.round((accepted / changes.length) * 100) : null,
+        confirmedByCustomer: changes.filter((j) => j.customerConfirmation === "connected").length,
+        notConnected: changes.filter((j) => j.customerConfirmation === "not_connected").length,
+        awaitingCustomer: changes.filter(awaitsCustomer).length,
+        failed: changes.filter((j) => j.state === "failed").length,
+        unsupported: changes.filter((j) => j.state === "unsupported").length,
+        avgSeconds: durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length / 1000) : null,
+        failuresByCode,
+        byModel
+      },
+      inventory: await this.repo.inventorySummary(),
+      items: rows
+    };
   }
 
   async adminList(limit: number) {

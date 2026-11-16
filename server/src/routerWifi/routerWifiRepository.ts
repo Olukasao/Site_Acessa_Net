@@ -31,6 +31,38 @@ export interface RouterJobRecord {
   updatedAt: string;
   claimedAt: string | null;
   finishedAt: string | null;
+  /** O cliente disse se conseguiu conectar com a nova senha (so quando o roteador nao deixa conferir). */
+  customerConfirmation: "connected" | "not_connected" | null;
+  confirmedAt: string | null;
+  /** Protocolo do chamado aberto quando o cliente disse que nao conseguiu conectar. */
+  ticketProtocol: string | null;
+  notifiedAt: string | null;
+}
+
+export type InventoryManagement = "available" | "offline" | "unsupported" | "requires_validation" | "unreachable" | "not_identified";
+
+export interface InventoryEntry {
+  contractId: string;
+  vendor: string | null;
+  model: string | null;
+  management: InventoryManagement;
+  /** Dono/nome do certificado do roteador (dado publico do aparelho), para descobrir novos fabricantes. */
+  certSubject?: string | null;
+  certFp?: string | null;
+}
+
+export interface InventoryCount {
+  vendor: string | null;
+  model: string | null;
+  management: string;
+  total: number;
+}
+
+export interface AgentStatus {
+  agentId: string;
+  lastSeenAt: string;
+  dryRun: boolean;
+  version: string | null;
 }
 
 export interface CreateRouterJobInput {
@@ -64,6 +96,20 @@ export interface RouterWifiRepository {
   expireStale(now: Date, pendingMaxMs: number, runningMaxMs: number): Promise<number>;
   /** Ultimas tarefas (painel administrativo). */
   list(limit: number): Promise<RouterJobRecord[]>;
+  /** Tarefas criadas a partir de `since` (relatorio do painel). */
+  listSince(since: Date, limit: number): Promise<RouterJobRecord[]>;
+  /** Resposta do cliente a "Conseguiu conectar?". So vale uma vez, no proprio pedido, enquanto estiver "nao confirmado". */
+  confirm(id: string, customerId: string, confirmation: "connected" | "not_connected", now: Date): Promise<boolean>;
+  setTicket(id: string, protocol: string): Promise<void>;
+  /** Marca o aviso de "senha alterada" como enviado; false se outro processo ja marcou (nunca avisa duas vezes). */
+  markNotified(id: string, now: Date): Promise<boolean>;
+  /** Troca de senha deste contrato que ainda espera a resposta do cliente. */
+  findAwaitingConfirmation(contractId: string, since: Date): Promise<RouterJobRecord | null>;
+  /** Sinal de vida do agente (cada busca de tarefas). */
+  touchAgent(agentId: string, dryRun: boolean, version: string | null, now: Date): Promise<void>;
+  lastAgent(): Promise<AgentStatus | null>;
+  upsertInventory(entries: InventoryEntry[], now: Date): Promise<number>;
+  inventorySummary(): Promise<{ counts: InventoryCount[]; total: number; lastSeenAt: string | null }>;
 }
 
 interface Row {
@@ -81,9 +127,14 @@ interface Row {
   updated_at: string;
   claimed_at: string | null;
   finished_at: string | null;
+  customer_confirmation: string | null;
+  confirmed_at: string | null;
+  ticket_protocol: string | null;
+  notified_at: string | null;
 }
 
-const COLUMNS = "id, customer_id, contract_id, kind, bands, secret_enc, state, result_json, error_code, agent_id, created_at, updated_at, claimed_at, finished_at";
+const COLUMNS =
+  "id, customer_id, contract_id, kind, bands, secret_enc, state, result_json, error_code, agent_id, created_at, updated_at, claimed_at, finished_at, customer_confirmation, confirmed_at, ticket_protocol, notified_at";
 const OPEN_STATES = "('pending','connecting','authenticating','updating','verifying')";
 const FINAL_STATES = "('completed','failed','unsupported','unconfirmed')";
 
@@ -111,7 +162,11 @@ function mapRow(row: Row): RouterJobRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     claimedAt: row.claimed_at,
-    finishedAt: row.finished_at
+    finishedAt: row.finished_at,
+    customerConfirmation: row.customer_confirmation === "connected" || row.customer_confirmation === "not_connected" ? row.customer_confirmation : null,
+    confirmedAt: row.confirmed_at,
+    ticketProtocol: row.ticket_protocol,
+    notifiedAt: row.notified_at
   };
 }
 
@@ -211,6 +266,82 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
   async list(limit: number) {
     const rows = await this.db.all(`SELECT ${COLUMNS} FROM router_wifi_jobs ORDER BY created_at DESC LIMIT ?`, [limit]);
     return rows.map(mapRow);
+  }
+
+  async listSince(since: Date, limit: number) {
+    const rows = await this.db.all(`SELECT ${COLUMNS} FROM router_wifi_jobs WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?`, [since.toISOString(), limit]);
+    return rows.map(mapRow);
+  }
+
+  async confirm(id: string, customerId: string, confirmation: "connected" | "not_connected", now: Date) {
+    const at = now.toISOString();
+    // "conectou" fecha o pedido como concluido; "nao conectou" continua nao confirmado (e vira chamado)
+    const changed = await this.db.run(
+      `UPDATE router_wifi_jobs SET customer_confirmation = ?, confirmed_at = ?, updated_at = ?,
+         state = CASE WHEN ? = 'connected' THEN 'completed' ELSE state END,
+         error_code = CASE WHEN ? = 'connected' THEN NULL ELSE error_code END
+       WHERE id = ? AND customer_id = ? AND kind = 'change_password' AND state = 'unconfirmed' AND customer_confirmation IS NULL`,
+      [confirmation, at, at, confirmation, confirmation, id, customerId]
+    );
+    return changed > 0;
+  }
+
+  async setTicket(id: string, protocol: string) {
+    await this.db.run("UPDATE router_wifi_jobs SET ticket_protocol = ? WHERE id = ?", [protocol, id]);
+  }
+
+  async markNotified(id: string, now: Date) {
+    return (await this.db.run("UPDATE router_wifi_jobs SET notified_at = ? WHERE id = ? AND notified_at IS NULL", [now.toISOString(), id])) > 0;
+  }
+
+  async findAwaitingConfirmation(contractId: string, since: Date) {
+    const rows = await this.db.all(
+      `SELECT ${COLUMNS} FROM router_wifi_jobs WHERE contract_id = ? AND kind = 'change_password' AND state = 'unconfirmed'
+         AND customer_confirmation IS NULL AND error_code IN ('ACCEPTED_NOT_VERIFIED','VERIFY_FAILED') AND finished_at >= ?
+       ORDER BY finished_at DESC LIMIT 1`,
+      [contractId, since.toISOString()]
+    );
+    return rows[0] ? mapRow(rows[0]) : null;
+  }
+
+  async touchAgent(agentId: string, dryRun: boolean, version: string | null, now: Date) {
+    const at = now.toISOString();
+    const changed = await this.db.run("UPDATE router_agent_status SET last_seen_at = ?, dry_run = ?, version = ? WHERE agent_id = ?", [at, dryRun ? 1 : 0, version, agentId]);
+    if (changed === 0) await this.db.run("INSERT INTO router_agent_status (agent_id, last_seen_at, dry_run, version) VALUES (?, ?, ?, ?)", [agentId, at, dryRun ? 1 : 0, version]);
+  }
+
+  async lastAgent() {
+    const rows = (await this.db.all("SELECT agent_id, last_seen_at, dry_run, version FROM router_agent_status ORDER BY last_seen_at DESC LIMIT 1", [])) as unknown as Array<{ agent_id: string; last_seen_at: string; dry_run: number; version: string | null }>;
+    const row = rows[0];
+    return row ? { agentId: row.agent_id, lastSeenAt: row.last_seen_at, dryRun: Number(row.dry_run) === 1, version: row.version } : null;
+  }
+
+  async upsertInventory(entries: InventoryEntry[], now: Date) {
+    const at = now.toISOString();
+    let saved = 0;
+    for (const e of entries) {
+      const changed = await this.db.run(
+        "UPDATE router_inventory SET vendor = ?, model = ?, management = ?, cert_subject = ?, cert_fp = ?, seen_at = ? WHERE contract_id = ?",
+        [e.vendor, e.model, e.management, e.certSubject ?? null, e.certFp ?? null, at, e.contractId]
+      );
+      if (changed === 0) {
+        await this.db.run("INSERT INTO router_inventory (contract_id, vendor, model, management, cert_subject, cert_fp, seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+          e.contractId, e.vendor, e.model, e.management, e.certSubject ?? null, e.certFp ?? null, at
+        ]);
+      }
+      saved++;
+    }
+    return saved;
+  }
+
+  async inventorySummary() {
+    const counts = (await this.db.all(
+      "SELECT vendor, model, management, COUNT(*) AS total FROM router_inventory GROUP BY vendor, model, management ORDER BY total DESC",
+      []
+    )) as unknown as Array<{ vendor: string | null; model: string | null; management: string; total: number | string }>;
+    const last = (await this.db.all("SELECT MAX(seen_at) AS seen_at FROM router_inventory", [])) as unknown as Array<{ seen_at: string | null }>;
+    const mapped = counts.map((c) => ({ vendor: c.vendor, model: c.model, management: c.management, total: Number(c.total) }));
+    return { counts: mapped, total: mapped.reduce((n, c) => n + c.total, 0), lastSeenAt: last[0]?.seen_at ?? null };
   }
 }
 

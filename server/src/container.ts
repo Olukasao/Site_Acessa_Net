@@ -8,6 +8,8 @@ import { SqlitePushDeviceRepository, MysqlPushDeviceRepository, type PushDeviceR
 import { SqliteAppCrashRepository, MysqlAppCrashRepository, type AppCrashRepository } from "./repositories/appCrashRepository.js";
 import { SqliteRouterWifiRepository, MysqlRouterWifiRepository, type RouterWifiRepository } from "./routerWifi/routerWifiRepository.js";
 import { RouterWifiService } from "./routerWifi/routerWifiService.js";
+import { WifiChangeNotifier } from "./routerWifi/wifiChangeNotifier.js";
+import { createFcmClient } from "./push/fcmClient.js";
 import { SqliteLocationRequestRepository, MysqlLocationRequestRepository, type LocationRequestRepository } from "./repositories/locationRequestRepository.js";
 import { SqliteTicketRatingRepository, MysqlTicketRatingRepository, type TicketRatingRepository } from "./repositories/ticketRatingRepository.js";
 import { SqliteRateLimitRepository, MysqlRateLimitRepository, type RateLimitRepository } from "./repositories/rateLimitRepository.js";
@@ -462,7 +464,12 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
   const documentsService = new DocumentsService(store, sgpClient, config.sgp.chamado);
   const locationService = new LocationService(locationRequests, store, sgpClient, providers.tickets, (customerId) => supportService.listTickets(customerId));
 
-  const routerWifiService = new RouterWifiService(config.routerWifi, routerWifiJobs, authProfiles, persistentLimiter, store, sgpClient);
+  const fcmForWifi = config.env === "test" || process.env.PUSH_ENABLED === "false" ? null : createFcmClient();
+  const wifiNotifier = new WifiChangeNotifier({ repo: pushDevices, store, sgpClient, mailer, pushEnabled: Boolean(fcmForWifi?.enabled), send: fcmForWifi?.send ?? (async () => "retry") });
+  const routerWifiService = new RouterWifiService(config.routerWifi, routerWifiJobs, authProfiles, persistentLimiter, store, sgpClient, {
+    openTicket: (input) => supportService.createWifiFollowUpTicket(input),
+    notifyChanged: (job) => wifiNotifier.notifyChanged(job)
+  });
 
   const adminTicketService = new AdminTicketService(centralActivityRepository, providers.tickets, providers.contracts, ticketRatings);
 

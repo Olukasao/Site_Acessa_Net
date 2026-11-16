@@ -42,6 +42,8 @@ export function loadConfig(env = process.env) {
   };
 }
 
+export const AGENT_VERSION = "0.2";
+
 export class Agent {
   constructor(cfg, { fetchImpl = fetch, sgp, credentials, manager, log = console } = {}) {
     this.cfg = cfg;
@@ -82,7 +84,8 @@ export class Agent {
   async tick() {
     const free = this.cfg.concurrency - this.running;
     if (free <= 0) return 0;
-    const { jobs } = await this.central("/api/internal/router-agent/claim", { agentId: this.cfg.agentId, max: Math.min(free, 10) });
+    // cada busca de tarefas e tambem o sinal de vida (a Central mostra "indisponivel agora" se ele sumir)
+    const { jobs } = await this.central("/api/internal/router-agent/claim", { agentId: this.cfg.agentId, max: Math.min(free, 10), dryRun: this.cfg.dryRun, version: AGENT_VERSION });
     for (const job of jobs) {
       this.running++;
       this.process(job).finally(() => this.running--);

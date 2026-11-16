@@ -77,9 +77,9 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
       await page.fill("#txt_Username", ctx.credentials.username ?? "");
       await page.fill("#txt_Password", ctx.credentials.password);
       await page.locator('input[type=button], button').filter({ hasText: /^\s*Log In\s*$/ }).or(page.locator('input[type=button][value="Log In"]')).filter({ visible: true }).first().click();
-      // depois do login.cgi o painel redireciona sozinho; esperamos sair da tela de login e conferimos na pagina principal
-      await page.waitForURL((u) => !/login/i.test(u.pathname) && u.pathname !== "/", { timeout: 15000 }).catch(() => undefined);
-      await page.goto(`${origin}/index.asp`, { waitUntil: "domcontentloaded" });
+      // depois do login.cgi o painel redireciona sozinho para /index.asp; ja logado, nao precisa abrir de novo
+      await page.waitForURL((u) => u.pathname !== "/" && !/login/i.test(u.pathname), { timeout: 15000 }).catch(() => undefined);
+      await page.waitForLoadState("domcontentloaded");
       const loggedIn = await page.evaluate(() => !document.getElementById("txt_Password") && /logoutfunc/i.test(document.documentElement.innerHTML));
       if (!loggedIn) throw fail("ROUTER_AUTH_FAILED", "login recusado");
       return { browser, context, page, origin, dialogs };
@@ -89,10 +89,10 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
     }
   }
 
-  async readBand(session, band) {
-    await session.page.goto(`${session.origin}/html/amp/wlanbasic/WlanBasic.asp?${BAND_PAGE[band]}`, { waitUntil: "domcontentloaded" });
+  async readBand(session, band, timeout = 20000) {
+    await session.page.goto(`${session.origin}/html/amp/wlanbasic/WlanBasic.asp?${BAND_PAGE[band]}`, { waitUntil: "domcontentloaded", timeout });
     // os campos sao preenchidos pelo JavaScript da pagina: espera o SSID aparecer
-    await session.page.waitForFunction(() => document.getElementById("wlSsid")?.value, null, { timeout: 15000 }).catch(() => undefined);
+    await session.page.waitForFunction(() => document.getElementById("wlSsid")?.value, null, { timeout }).catch(() => undefined);
     return session.page.evaluate(() => ({
       ssid: document.getElementById("wlSsid")?.value ?? null,
       auth: document.getElementById("wlAuthMode")?.value ?? null,
@@ -113,23 +113,49 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
     return { bands, ssids };
   }
 
+  /** Depois de salvar o roteador fica alguns segundos sem responder (aplica o Wi-Fi): tenta ler de novo ate ele voltar. */
+  async readWhenBack(session, band, maxMs = 45000) {
+    const deadline = Date.now() + maxMs;
+    let last = null;
+    for (;;) {
+      try {
+        const info = await this.readBand(session, band, 8000);
+        if (info.ssid) return info;
+      } catch (error) {
+        last = error;
+      }
+      if (Date.now() >= deadline) throw last ?? fail("INTERNAL", "o roteador nao voltou a responder");
+      await session.page.waitForTimeout(1000);
+    }
+  }
+
   async changeWifiPassword(_ctx, session, input) {
     session.applied = [];
     for (const band of input.bands) {
       const before = await this.readBand(session, band);
       if (!before.ssid) throw fail("ROUTER_UNSUPPORTED", `rede ${band} nao encontrada`);
       if (!PSK_MODES.has(String(before.auth).toLowerCase()) || !before.pskField) throw fail("ROUTER_UNSUPPORTED", `rede ${band} nao usa senha WPA`);
-      const dialogsBefore = session.dialogs.length;
-      await session.page.fill(before.pskField, input.password);
-      await session.page.dispatchEvent(before.pskField, "change");
-      const response = session.page.waitForResponse((r) => /\/set\.cgi\?/.test(r.url()) && r.request().method() === "POST", { timeout: 30000 });
-      await session.page.click("#btnApplySubmit");
-      const res = await response.catch(() => null);
-      if (!res || res.status() !== 200) throw fail("INTERNAL", "o roteador nao respondeu ao salvar");
-      await session.page.waitForTimeout(6000);
-      if (session.dialogs.length > dialogsBefore) throw fail("INTERNAL", "o painel mostrou um aviso ao salvar");
-      const after = await this.readBand(session, band);
-      // o resto da rede precisa continuar igual (mesmo nome e mesma seguranca)
+      let saved = false;
+      // o painel recusa salvar enquanto aplica outra mudanca (aviso na tela): espera um pouco e tenta de novo, uma vez
+      for (let attempt = 0; attempt < 2 && !saved; attempt++) {
+        const dialogsBefore = session.dialogs.length;
+        await session.page.fill(before.pskField, input.password);
+        await session.page.dispatchEvent(before.pskField, "change");
+        const response = session.page.waitForResponse((r) => /\/set\.cgi\?/.test(r.url()) && r.request().method() === "POST", { timeout: attempt === 0 ? 12000 : 30000 });
+        await session.page.click("#btnApplySubmit");
+        const res = await response.catch(() => null);
+        if (res) {
+          if (res.status() !== 200) throw fail("INTERNAL", "o roteador nao respondeu ao salvar");
+          saved = true;
+        } else if (session.dialogs.length > dialogsBefore && attempt === 0) {
+          await session.page.waitForTimeout(4000);
+          await this.readBand(session, band); // recarrega a pagina antes de tentar de novo
+        } else {
+          throw fail("INTERNAL", session.dialogs.length > dialogsBefore ? "o painel mostrou um aviso ao salvar" : "o roteador nao respondeu ao salvar");
+        }
+      }
+      // depois de salvar o roteador aplica a mudanca; uma pausa curta e a pagina aberta de novo mostram o estado real
+      const after = await this.readWhenBack(session, band);
       if (after.ssid !== before.ssid || after.auth !== before.auth) throw fail("INTERNAL", "a rede mudou alem da senha");
       session.applied.push(band);
     }

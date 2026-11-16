@@ -165,7 +165,7 @@ test("modelo validado: autentica, troca, verifica e sempre fecha a sessão", asy
   const { states, report } = recorder();
   await managerWith({ sgp: fakeVendor }).changePassword({ contractId: "1001", kind: "change_password", bands: ["2.4GHz", "5GHz"], secretEnc: "x" }, report);
   assert.deepEqual(states.map((s) => s.state), ["connecting", "authenticating", "updating", "verifying", "completed"]);
-  assert.deepEqual(states.at(-1).result, { bands: ["2.4GHz", "5GHz"], verified: true, accepted: true });
+  assert.deepEqual(states.at(-1).result, { bands: ["2.4GHz", "5GHz"], verified: true, accepted: true, vendor: null, model: null });
   assert.deepEqual(adapter.changed, { password: "Casa-Nova#2026", bands: ["2.4GHz", "5GHz"] });
   assert.equal(adapter.closed, 1);
   assert.equal(adapterFor("fake"), adapter);
@@ -178,7 +178,7 @@ test("sem verificação = não confirmado; falha de login = falha; erro no meio 
     await managerWith({ sgp: fakeVendor }).changePassword({ contractId: "1001", kind: "change_password", bands: ["5GHz"], secretEnc: "x" }, report);
     return states.at(-1);
   };
-  assert.deepEqual((await run({ verified: false })).result, { bands: ["5GHz"], verified: false, accepted: true }); // a Central transforma em "nao confirmado"
+  assert.deepEqual((await run({ verified: false })).result, { bands: ["5GHz"], verified: false, accepted: true, vendor: null, model: null }); // a Central transforma em "nao confirmado"
   assert.deepEqual(await run({ authFail: true }), { state: "failed", errorCode: "ROUTER_AUTH_FAILED" });
   assert.deepEqual(await run({ changeFail: "INTERNAL" }), { state: "unconfirmed", errorCode: "INTERNAL" });
   assert.deepEqual(await run({ changeFail: "ROUTER_UNREACHABLE" }), { state: "failed", errorCode: "ROUTER_UNREACHABLE" });
@@ -207,4 +207,41 @@ test("Huawei: nome do produto da página de login e só o modelo validado é alt
   assert.equal(a.supportsModel("EG8145V5-V2"), true);
   assert.equal(a.supportsModel("HG8245H"), false);
   assert.equal(a.supportsModel(null), false);
+});
+
+test("inventário: janela de horário (vira a meia-noite) e só leitura", async () => {
+  const { parseWindow, inWindow, runInventory } = await import("../src/inventory.mjs");
+  assert.deepEqual(parseWindow("1-6"), { from: 1, to: 6 });
+  assert.equal(parseWindow(""), null);
+  assert.equal(inWindow(parseWindow("1-6"), 3), true);
+  assert.equal(inWindow(parseWindow("1-6"), 6), false);
+  assert.equal(inWindow(parseWindow("22-5"), 23), true);
+  assert.equal(inWindow(parseWindow("22-5"), 2), true);
+  assert.equal(inWindow(parseWindow("22-5"), 12), false);
+  assert.equal(inWindow(null, 12), true);
+  assert.throws(() => parseWindow("1-99"));
+
+  const sent = [];
+  const manager = {
+    inventoryOne: async (c) => (c === "404" ? null : c === "500" ? Promise.reject(Object.assign(new Error("x"), { code: "SGP_UNAVAILABLE" })) : { contractId: c, vendor: "Huawei", model: "EG8145V5-V2", management: "available" })
+  };
+  const stats = await runInventory({ manager, central: async (_p, body) => void sent.push(...body.entries), contracts: ["1", "2", "404", "500", "3"], delayMs: 0, batchSize: 2, sleep: async () => {}, log: { warn() {} } });
+  assert.equal(stats.saved, 3);
+  assert.equal(stats.notFound, 1);
+  assert.equal(stats.failed, 1);
+  assert.deepEqual(stats.byVendor, { "Huawei EG8145V5-V2": 3 });
+  assert.deepEqual(sent.map((e) => e.contractId), ["1", "2", "3"]);
+});
+
+test("inventário de um contrato: offline, certificado de fabricante novo e fabricante já fixado", async () => {
+  registerAdapter(new FakeAdapter());
+  const m = managerWith({ sgp: { ...fakeVendor, verificaAcesso: async () => ({ online: false, serviceId: "77" }) } });
+  assert.deepEqual(await m.inventoryOne("1001"), { contractId: "1001", vendor: null, model: null, management: "offline" });
+  assert.equal(await managerWith({ sgp: { verificaAcesso: async () => null } }).inventoryOne("9"), null);
+  // fabricante do SGP sem pin configurado: fica "em validacao" (nao entra no roteador)
+  const known = await managerWith().inventoryOne("1001");
+  assert.deepEqual(known, { contractId: "1001", vendor: "tplink", model: null, management: "requires_validation" });
+  // roteador do cliente
+  const own = await managerWith({ sgp: { equipmentType: async () => ({ found: true, label: "PARTICULAR", vendor: "customer_owned" }) } }).inventoryOne("1001");
+  assert.equal(own.management, "unsupported");
 });

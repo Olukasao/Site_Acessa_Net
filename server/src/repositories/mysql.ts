@@ -218,8 +218,33 @@ export async function migrateMysql(pool: Pool): Promise<void> {
       updated_at VARCHAR(32) NOT NULL,
       claimed_at VARCHAR(32) NULL,
       finished_at VARCHAR(32) NULL,
+      customer_confirmation VARCHAR(16) NULL,
+      confirmed_at VARCHAR(32) NULL,
+      ticket_protocol VARCHAR(64) NULL,
+      notified_at VARCHAR(32) NULL,
       INDEX idx_router_wifi_jobs_state (state, created_at),
       INDEX idx_router_wifi_jobs_contract (contract_id, kind, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS router_agent_status (
+      agent_id VARCHAR(64) PRIMARY KEY,
+      last_seen_at VARCHAR(32) NOT NULL,
+      dry_run TINYINT NOT NULL,
+      version VARCHAR(32) NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS router_inventory (
+      contract_id VARCHAR(64) PRIMARY KEY,
+      vendor VARCHAR(32) NULL,
+      model VARCHAR(64) NULL,
+      management VARCHAR(24) NOT NULL,
+      cert_subject VARCHAR(120) NULL,
+      cert_fp VARCHAR(64) NULL,
+      seen_at VARCHAR(32) NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 

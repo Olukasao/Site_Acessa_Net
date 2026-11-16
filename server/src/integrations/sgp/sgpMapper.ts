@@ -55,7 +55,7 @@ export function mapSgpCustomer(documento: string, contracts: SgpContractRaw[], i
     name: customerName,
     cpf: normalizedDocument,
     phone: findPhone(contracts),
-    email: findEmail(contracts)
+    email: findCustomerEmail(contracts)
   };
 
   /**
@@ -202,7 +202,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * /api/ura/consultacliente/ se o primeiro nao achar nada -- entao os dois
  * formatos precisam ser tratados aqui.
  */
-function findEmail(contracts: SgpContractRaw[]) {
+export function findCustomerEmail(contracts: SgpContractRaw[]) {
   for (const record of contracts) {
     const emails = Array.isArray(record.emails) ? (record.emails as Record<string, unknown>[]) : [];
     for (const entry of emails) {

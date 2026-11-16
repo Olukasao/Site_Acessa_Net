@@ -442,3 +442,8 @@ export async function deleteSeller(id) {
 export async function getSellerRanking(params) {
   return adminRequest(`/admin/api/vendedores/ranking${buildQuery(params)}`);
 }
+
+/** Painel de roteadores/Wi-Fi: pedidos, taxa de sucesso por modelo, falhas, tempo medio, agente e inventario (so leitura). */
+export async function getRouterWifiOverview(params) {
+  return adminRequest(`/admin/api/roteadores${buildQuery(params)}`);
+}

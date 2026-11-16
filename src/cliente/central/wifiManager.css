@@ -37,3 +37,11 @@
 .wifi-confirm-box h4 { margin: 0; font-size: 18px; }
 .wifi-confirm-box p { margin: 0; }
 .wifi-confirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+
+.wifi-result.is-pending { background: rgba(37, 99, 235, 0.08); color: inherit; }
+.wifi-confirmation { margin-top: 8px; }
+.wifi-confirmation p { margin: 0 0 8px; }
+.wifi-confirmation-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.wifi-offer { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; margin: 0 0 14px; border-radius: 14px; background: rgba(37, 99, 235, 0.08); border: 1px solid rgba(37, 99, 235, 0.25); }
+.wifi-offer p { margin: 4px 0 10px; }
+.wifi-offer .home-btn { display: inline-flex; }
