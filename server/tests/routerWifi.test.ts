@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import { createContainer } from "../src/container.js";
 import { hashPassword, sha256 } from "../src/security/hash.js";
-import { validateWifiPassword } from "../src/routerWifi/routerWifiService.js";
+import { buildWifiNames, validateWifiBaseName, validateWifiPassword } from "../src/routerWifi/routerWifiService.js";
 
 const TOKEN = "agent_token_" + "t".repeat(40);
 const FEED_TOKEN = "feed_token_" + "f".repeat(40);
@@ -116,7 +116,7 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
     const claim = await app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1", max: 5 }, remoteAddress: freshIp() });
     const [job] = claim.json().jobs;
     expect(job).toMatchObject({ id: jobId, contractId: "1001", kind: "change_password", bands: ["2.4GHz", "5GHz"] });
-    expect(Object.keys(job).sort()).toEqual(["bands", "contractId", "id", "kind", "secretEnc"]); // nada de cliente/CPF
+    expect(Object.keys(job).sort()).toEqual(["bands", "contractId", "id", "kind", "params", "secretEnc"]); // nada de cliente/CPF
     const plain = privateDecrypt({ key: privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, Buffer.from(job.secretEnc, "base64")).toString();
     expect(plain).toBe("Casa-Nova#2026");
     // outro agente não pega a mesma
@@ -481,6 +481,135 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
     expect(ctx.tickets).toHaveLength(1);
     expect(ctx.tickets[0]!.description).toContain("Presa#2026");
     expect((await repo.findById(job.id))?.ticketProtocol).toBe("261116000001");
+    await ctx.app.close();
+  });
+
+  it("nome do Wi-Fi: o cliente digita só o nome; 2.4 e 5G ficam sempre no fim das duas redes", () => {
+    expect(validateWifiBaseName("Casa da Ana")).toBeNull();
+    expect(buildWifiNames("Casa da Ana")).toEqual({ "2.4GHz": "Casa da Ana 2.4", "5GHz": "Casa da Ana 5G" });
+    expect(validateWifiBaseName("")).toMatch(/Digite/);
+    expect(validateWifiBaseName(" Casa")).toMatch(/espaço/);
+    expect(validateWifiBaseName("Casa 5G")).toMatch(/2.4 e 5G/); // ja traz a marca: nao duplica
+    expect(validateWifiBaseName("Casa-2.4")).toMatch(/2.4 e 5G/);
+    expect(validateWifiBaseName("Casa 5GHz")).toMatch(/2.4 e 5G/);
+    expect(validateWifiBaseName("Cása")).toMatch(/sem acento/);
+    expect(validateWifiBaseName("<b>x</b>")).toMatch(/sem acento/);
+    expect(validateWifiBaseName("a  b")).toMatch(/um espaço/);
+    expect(validateWifiBaseName("a".repeat(28))).toBeNull();
+    expect(validateWifiBaseName("a".repeat(29))).toMatch(/28/); // com " 2.4"/" 5G" passaria de 32
+  });
+
+  const nome = (body: Record<string, unknown> = {}) => ({ contractId: "1001", name: "Casa da Ana", currentPassword: "Senha-Central-1", ...body });
+  const postName = (ctx: Awaited<ReturnType<typeof setup>>, body: Record<string, unknown> = nome(), auth: string | null = ctx.auth) =>
+    ctx.app.inject({ method: "POST", url: "/api/customer/wifi/name", headers: auth ? { authorization: auth } : {}, payload: body, remoteAddress: freshIp() });
+  const completarNome = async (ctx: Awaited<ReturnType<typeof setup>>, jobId: string, state: string, result?: Record<string, unknown>, errorCode?: string) => {
+    await ctx.app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1" }, remoteAddress: freshIp() });
+    return ctx.app.inject({ method: "POST", url: `/api/internal/router-agent/jobs/${jobId}`, headers: agent, payload: { agentId: "a1", state, ...(result ? { result } : {}), ...(errorCode ? { errorCode } : {}) }, remoteAddress: freshIp() });
+  };
+
+  it("troca de nome: o sistema monta os dois nomes, o agente confere de volta e termina concluído sem pedir confirmação", async () => {
+    const ctx = await setup();
+    expect((await postName(ctx, nome(), null)).statusCode).toBe(401);
+    for (const ruim of [{ name: "Casa 5G" }, { name: "Cása" }, { name: "" }, { name: "x".repeat(40) }]) {
+      expect([400, 422]).toContain((await postName(ctx, nome(ruim))).statusCode);
+    }
+    // o cliente nao escolhe redes nem nomes prontos: so o nome
+    for (const extra of [{ bands: ["5GHz"] }, { names: { "5GHz": "x" } }, { ip: "100.64.0.1" }]) {
+      expect((await postName(ctx, nome(extra))).statusCode).toBe(400);
+    }
+    expect((await postName(ctx, nome({ currentPassword: "errada" }))).statusCode).toBe(403);
+    expect(await ctx.container.routerWifiJobs.list(10)).toHaveLength(0);
+
+    const created = await postName(ctx);
+    expect(created.statusCode).toBe(202);
+    const job = created.json().job;
+    expect(job).toMatchObject({ kind: "change_ssid", bands: ["2.4GHz", "5GHz"], names: { "2.4GHz": "Casa da Ana 2.4", "5GHz": "Casa da Ana 5G" } });
+    // o agente recebe os nomes prontos (nao e segredo) e nenhuma senha
+    const claim = await ctx.app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1" }, remoteAddress: freshIp() });
+    expect(claim.json().jobs[0]).toMatchObject({ kind: "change_ssid", secretEnc: null, params: { names: { "2.4GHz": "Casa da Ana 2.4", "5GHz": "Casa da Ana 5G" } } });
+    // enquanto roda, nao deixa pedir outra troca (nome ou senha)
+    expect((await postName(ctx)).statusCode).toBe(409);
+    const pw = await ctx.app.inject({ method: "POST", url: "/api/customer/wifi/password", headers: { authorization: ctx.auth }, payload: change(), remoteAddress: freshIp() });
+    expect(pw.statusCode).toBe(409);
+
+    const done = await ctx.app.inject({ method: "POST", url: `/api/internal/router-agent/jobs/${job.id}`, headers: agent, payload: { agentId: "a1", state: "completed", result: { bands: ["2.4GHz", "5GHz"], verified: true, accepted: true, vendor: "Huawei", model: "EG8145V5-V2" } }, remoteAddress: freshIp() });
+    expect(done.json()).toEqual({ ok: true, state: "completed" });
+    const seen = (await ctx.app.inject({ method: "GET", url: `/api/customer/wifi/jobs/${job.id}`, headers: { authorization: ctx.auth }, remoteAddress: freshIp() })).json().job;
+    expect(seen).toMatchObject({ state: "completed", done: true, needsConfirmation: false });
+    expect(seen.message).toMatch(/nome do Wi-Fi foi alterado/);
+    expect(ctx.tickets).toHaveLength(0);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(ctx.notified).toContain(job.id);
+    await ctx.app.close();
+  });
+
+  it("troca de nome que não funcionou abre o chamado com os nomes (sem senha nenhuma)", async () => {
+    const ctx = await setup();
+    const job = (await postName(ctx)).json().job;
+    await completarNome(ctx, job.id, "failed", undefined, "ROUTER_UNREACHABLE");
+    await new Promise((r) => setTimeout(r, 40));
+    expect(ctx.tickets).toHaveLength(1);
+    expect(ctx.tickets[0]!.description).toContain("Troca do NOME do Wi-Fi");
+    expect(ctx.tickets[0]!.description).toContain('"Casa da Ana 2.4"');
+    expect(ctx.tickets[0]!.description).toContain('"Casa da Ana 5G"');
+    expect(ctx.tickets[0]!.description).not.toMatch(/senha escolhida/i);
+    const seen = (await ctx.app.inject({ method: "GET", url: `/api/customer/wifi/jobs/${job.id}`, headers: { authorization: ctx.auth }, remoteAddress: freshIp() })).json().job;
+    expect(seen).toMatchObject({ fallbackTicket: true, ticketProtocol: "261116000001" });
+    expect(seen.message).toContain("nome do Wi-Fi");
+    // "concluido" sem a conferencia de volta no roteador nao vale: vira falha e chamado
+    const ctx2 = await setup();
+    const j2 = (await postName(ctx2)).json().job;
+    const r2 = await completarNome(ctx2, j2.id, "completed", { bands: ["2.4GHz", "5GHz"], verified: false, accepted: true });
+    expect(r2.json().state).toBe("unconfirmed");
+    await new Promise((r) => setTimeout(r, 40));
+    expect(ctx2.tickets).toHaveLength(1);
+    await ctx.app.close();
+    await ctx2.app.close();
+  });
+
+  it("histórico: lista as trocas (senha e nome) sem nunca trazer senha; só o titular enxerga", async () => {
+    const ctx = await setup();
+    const pwJob = await changeAccepted(ctx);
+    const nameJob = (await postName(ctx)).json().job;
+    await completarNome(ctx, nameJob.id, "completed", { bands: ["2.4GHz", "5GHz"], verified: true, accepted: true });
+    const h = await ctx.app.inject({ method: "GET", url: "/api/customer/wifi/history?contractId=1001", headers: { authorization: ctx.auth }, remoteAddress: freshIp() });
+    expect(h.statusCode).toBe(200);
+    const body = h.json();
+    expect(body.items.map((i: { id: string }) => i.id)).toEqual([nameJob.id, pwJob]); // mais nova primeiro
+    expect(body.items[0]).toMatchObject({ kind: "change_ssid", done: true, names: { "2.4GHz": "Casa da Ana 2.4" } });
+    expect(body.items[1]).toMatchObject({ kind: "change_password" });
+    expect(body.lastPassword).toMatchObject({ bands: ["2.4GHz", "5GHz"] });
+    expect(JSON.stringify(body)).not.toMatch(/Casa-Nova|password_enc|passwordEnc|secretEnc/);
+    expect((await ctx.app.inject({ method: "GET", url: "/api/customer/wifi/history?contractId=1001", remoteAddress: freshIp() })).statusCode).toBe(401);
+    expect([403, 404]).toContain((await ctx.app.inject({ method: "GET", url: "/api/customer/wifi/history?contractId=2002", headers: { authorization: ctx.auth }, remoteAddress: freshIp() })).statusCode);
+    await ctx.app.close();
+  });
+
+  it("ver a última senha: só com a senha da Central, só a do próprio contrato, e some se o cliente disser que não funcionou", async () => {
+    const ctx = await setup();
+    const reveal = (body: Record<string, unknown> = {}, auth: string | null = ctx.auth) =>
+      ctx.app.inject({ method: "POST", url: "/api/customer/wifi/last-password", headers: auth ? { authorization: auth } : {}, payload: { contractId: "1001", currentPassword: "Senha-Central-1", ...body }, remoteAddress: freshIp() });
+    // ainda nao ha senha guardada
+    expect((await reveal()).statusCode).toBe(404);
+    const jobId = await changeAccepted(ctx);
+    expect((await reveal({}, null)).statusCode).toBe(401);
+    expect((await reveal({ currentPassword: "errada" })).statusCode).toBe(403);
+    expect((await reveal({ extra: 1 })).statusCode).toBe(400);
+    const ok = await reveal();
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers["cache-control"]).toContain("no-store");
+    expect(ok.json()).toMatchObject({ password: "Casa-Nova#2026", bands: ["2.4GHz", "5GHz"] });
+    // a senha esta cifrada no banco (nunca em claro)
+    const row = await ctx.container.routerWifiJobs.getLastPassword("1001");
+    expect(row?.passwordEnc).toBeTruthy();
+    expect(row?.passwordEnc).not.toContain("Casa-Nova");
+    // outro cliente nao le a senha deste contrato
+    const authB = (() => `Bearer ${ctx.container.localPasswordAuthService.tokens.issueAccessToken("customer_B", "sess_B")}`)();
+    await ctx.container.authSessions.create({ id: "sess_B", sessionTokenHash: "hb", customerId: "customer_B", cpfHash: sha256("B"), expiresAt: new Date(Date.now() + 3_600_000) } as never);
+    expect([403, 404]).toContain((await reveal({}, authB)).statusCode);
+    // o cliente diz que NAO conectou: essa senha nao vale como "ultima senha"
+    await ctx.app.inject({ method: "POST", url: `/api/customer/wifi/jobs/${jobId}/confirm`, headers: { authorization: ctx.auth }, payload: { connected: false }, remoteAddress: freshIp() });
+    expect((await reveal()).statusCode).toBe(404);
     await ctx.app.close();
   });
 

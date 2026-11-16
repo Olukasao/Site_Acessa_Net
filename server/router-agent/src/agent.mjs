@@ -137,7 +137,7 @@ export class Agent {
     await timingsStore.run(store, async () => {
       try {
         if (job.kind === "status") await this.manager.status(job, report);
-        else if (job.kind === "change_password") await this.manager.changePassword(job, report);
+        else if (job.kind === "change_password" || job.kind === "change_ssid") await this.manager.changeWifi(job, report);
         else await report("failed", { errorCode: "INTERNAL" });
       } catch (error) {
         if (error?.code === "JOB_ABORTED") {
@@ -145,7 +145,7 @@ export class Agent {
           return;
         }
         this.log.error?.(`[router-agent] ${job.id}: ${safeError(error)}`);
-        await report(job.kind === "change_password" ? "unconfirmed" : "failed", { errorCode: "INTERNAL" });
+        await report(job.kind === "status" ? "failed" : "unconfirmed", { errorCode: "INTERNAL" });
       } finally {
         this.onTimings?.(job, summarizeTimings(store));
         this.log.info?.(`[router-agent] tempos ${job.kind} ${job.id.slice(0, 8)}: ${JSON.stringify(summarizeTimings(store))}`);

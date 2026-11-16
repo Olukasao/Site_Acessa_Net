@@ -8,6 +8,7 @@ import type { RouterJobRecord } from "./routerWifiRepository.js";
 
 export const WIFI_PUSH_TITLE = "A senha do seu Wi-Fi foi alterada";
 export const WIFI_PUSH_BODY = "Não foi você? Fale com a gente agora pelo atendimento.";
+export const WIFI_NAME_PUSH_TITLE = "O nome do seu Wi-Fi foi alterado";
 const WIFI_CHANNEL = "chamados";
 
 /**
@@ -37,7 +38,7 @@ export class WifiChangeNotifier {
     try {
       const devices = (await this.deps.repo.listActiveDevices()).filter((d) => d.customerId === job.customerId && (d.contractIds.length === 0 || d.contractIds.includes(job.contractId)));
       for (const device of devices) {
-        const result = await this.deps.send({ token: device.token, title: WIFI_PUSH_TITLE, body: WIFI_PUSH_BODY, data: { route: "/cliente/atendimento", kind: "wifi_changed" }, channelId: WIFI_CHANNEL });
+        const result = await this.deps.send({ token: device.token, title: job.kind === "change_ssid" ? WIFI_NAME_PUSH_TITLE : WIFI_PUSH_TITLE, body: WIFI_PUSH_BODY, data: { route: "/cliente/atendimento", kind: "wifi_changed" }, channelId: WIFI_CHANNEL });
         if (result === "invalid_token") await this.deps.repo.disableToken(device.token);
       }
     } catch (error) {
@@ -53,7 +54,7 @@ export class WifiChangeNotifier {
       if (!to) return;
       const name = this.deps.store.getCustomer(job.customerId)?.name ?? "";
       const when = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(job.finishedAt ?? Date.now()));
-      await this.deps.mailer.sendWifiChangedEmail({ to, name, when, bands: job.bands.map((b) => b.replace("GHz", " GHz")).join(" e ") });
+      await this.deps.mailer.sendWifiChangedEmail({ to, name, when, bands: job.bands.map((b) => b.replace("GHz", " GHz")).join(" e "), what: job.kind === "change_ssid" ? "nome" : "senha" });
     } catch (error) {
       this.deps.log?.warn({ tag: "WIFI", error: error instanceof Error ? error.message : "erro" }, "[WIFI] e-mail de senha alterada falhou");
     }

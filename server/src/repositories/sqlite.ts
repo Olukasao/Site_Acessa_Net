@@ -181,7 +181,16 @@ function migrate(db: DatabaseSync) {
       notified_at TEXT,
       fallback_enc TEXT,
       fallback_state TEXT,
-      fallback_tries INTEGER NOT NULL DEFAULT 0
+      fallback_tries INTEGER NOT NULL DEFAULT 0,
+      params_json TEXT
+    );
+    CREATE TABLE IF NOT EXISTS router_wifi_last_password (
+      contract_id TEXT PRIMARY KEY,
+      customer_id TEXT NOT NULL,
+      password_enc TEXT NOT NULL,
+      bands TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      set_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS router_agent_status (
       agent_id TEXT PRIMARY KEY,
@@ -521,7 +530,7 @@ function migrate(db: DatabaseSync) {
 
   addColumnIfMissing(db, "central_notices", "image_url", "TEXT");
   addColumnIfMissing(db, "contract_requests", "cpf", "TEXT");
-  for (const [column, definition] of [["customer_confirmation", "TEXT"], ["confirmed_at", "TEXT"], ["ticket_protocol", "TEXT"], ["notified_at", "TEXT"], ["fallback_enc", "TEXT"], ["fallback_state", "TEXT"], ["fallback_tries", "INTEGER NOT NULL DEFAULT 0"]] as const) {
+  for (const [column, definition] of [["customer_confirmation", "TEXT"], ["confirmed_at", "TEXT"], ["ticket_protocol", "TEXT"], ["notified_at", "TEXT"], ["fallback_enc", "TEXT"], ["fallback_state", "TEXT"], ["fallback_tries", "INTEGER NOT NULL DEFAULT 0"], ["params_json", "TEXT"]] as const) {
     addColumnIfMissing(db, "router_wifi_jobs", column, definition);
   }
 }

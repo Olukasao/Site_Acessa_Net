@@ -225,8 +225,20 @@ export async function migrateMysql(pool: Pool): Promise<void> {
       fallback_enc TEXT NULL,
       fallback_state VARCHAR(16) NULL,
       fallback_tries INT NOT NULL DEFAULT 0,
+      params_json TEXT NULL,
       INDEX idx_router_wifi_jobs_state (state, created_at),
       INDEX idx_router_wifi_jobs_contract (contract_id, kind, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS router_wifi_last_password (
+      contract_id VARCHAR(64) PRIMARY KEY,
+      customer_id VARCHAR(191) NOT NULL,
+      password_enc TEXT NOT NULL,
+      bands VARCHAR(64) NOT NULL,
+      job_id VARCHAR(36) NOT NULL,
+      set_at VARCHAR(32) NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
@@ -615,7 +627,8 @@ export async function migrateMysql(pool: Pool): Promise<void> {
     ["notified_at", "VARCHAR(32) NULL"],
     ["fallback_enc", "TEXT NULL"],
     ["fallback_state", "VARCHAR(16) NULL"],
-    ["fallback_tries", "INT NOT NULL DEFAULT 0"]
+    ["fallback_tries", "INT NOT NULL DEFAULT 0"],
+    ["params_json", "TEXT NULL"]
   ] as const) {
     await addMysqlColumnIfMissing(pool, "router_wifi_jobs", column, definition);
   }

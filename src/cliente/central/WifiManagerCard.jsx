@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Eye, EyeOff, KeyRound, Loader2, Router, Wifi, X } from "lucide-react";
+import { Check, Eye, EyeOff, History, KeyRound, Loader2, Pencil, Router, Wifi, X } from "lucide-react";
 import { Link } from "react-router-dom";
-import { changeWifiPassword, confirmWifiChange, getWifiJob, getWifiStatus } from "../clienteApi";
+import { changeWifiName, changeWifiPassword, confirmWifiChange, getWifiHistory, getWifiJob, getWifiStatus, revealWifiLastPassword } from "../clienteApi";
 import "./wifiManager.css";
 
 /**
@@ -20,6 +20,18 @@ const RULES = [
   { label: "Um caractere especial", test: (v) => /[^A-Za-z0-9]/.test(v) },
   { label: "Sem acento e sem espaço no começo ou no fim", test: (v) => v.length > 0 && /^[\x20-\x7E]+$/.test(v) && v === v.trim() }
 ];
+// Nome: o cliente digita so a base; " 2.4" e " 5G" sao acrescentados e as duas redes mudam juntas.
+function nameProblem(v) {
+  if (!v) return "Digite o nome do Wi-Fi.";
+  if (v !== v.trim()) return "Sem espaço no começo ou no fim.";
+  if (v.length > 28) return "No máximo 28 caracteres.";
+  if (!/^[A-Za-z0-9 ._-]+$/.test(v)) return "Use só letras sem acento, números, espaço, ponto, hífen e _.";
+  if (/ {2}/.test(v)) return "Use só um espaço entre as palavras.";
+  if (/(^|[\s._-])(2\.?4|5)\s*(g|ghz)?$/i.test(v)) return "Não digite 2.4 nem 5G: eles são acrescentados sozinhos.";
+  return "";
+}
+const KIND_LABEL = { change_password: "Senha do Wi-Fi", change_ssid: "Nome do Wi-Fi" };
+const fmtDate = (v) => (v ? new Date(v).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "");
 const MANAGEMENT_LABEL = {
   available: "Disponível",
   offline: "Roteador desconectado",
@@ -75,6 +87,10 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
   const [password, setPassword] = useState("");
   const [current, setCurrent] = useState("");
   const [confirming, setConfirming] = useState(false);
+  const [action, setAction] = useState("password"); // o que o dialogo de confirmacao vai fazer: password | name | reveal
+  const [baseName, setBaseName] = useState("");
+  const [history, setHistory] = useState(null);
+  const [revealed, setRevealed] = useState(null); // { password, bands } -- some sozinho
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [changeJob, setChangeJobRaw] = useState(null);
@@ -92,6 +108,24 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
     getWifiStatus(contractId, controller.signal).then(setStatus).catch(() => setStatus({ available: false, job: null }));
     return () => controller.abort();
   }, [contractId]);
+
+  const loadHistory = () => {
+    if (!contractId) return;
+    getWifiHistory(contractId).then(setHistory).catch(() => setHistory(null));
+  };
+  useEffect(() => {
+    if (!contractId || !status?.available) return;
+    loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contractId, status?.available, polled?.done, confirmedJob]);
+
+  // A senha mostrada some sozinha (30 s) e ao sair da tela.
+  useEffect(() => {
+    if (!revealed) return undefined;
+    const t = setTimeout(() => setRevealed(null), 30_000);
+    return () => clearTimeout(t);
+  }, [revealed]);
+  useEffect(() => () => setRevealed(null), []);
 
   // No fluxo de atendimento ("Troca de senha do roteador"): se a troca automatica nao serve para este roteador/momento,
   // avisa a tela para seguir com o pedido normal de chamado.
@@ -131,6 +165,7 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
   const ruleState = RULES.map((r) => ({ ...r, met: r.test(password) }));
   const valid = ruleState.every((r) => r.met);
   const selectedBands = BAND_OPTIONS.find((o) => o.id === band)?.bands ?? [];
+  const nameError = nameProblem(baseName);
   const busy = sending || (change && !change.done);
 
   async function answer(connected) {
@@ -147,14 +182,33 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
     }
   }
 
+  function ask(kind) {
+    setAction(kind);
+    setError("");
+    setCurrent("");
+    setConfirming(true);
+  }
+
   async function submit() {
     setSending(true);
     setError("");
     try {
-      const r = await changeWifiPassword({ contractId, newPassword: password, bands: selectedBands, currentPassword: current });
+      if (action === "reveal") {
+        const r = await revealWifiLastPassword({ contractId, currentPassword: current });
+        setRevealed({ password: r.password, bands: r.bands });
+        setConfirming(false);
+        setCurrent("");
+        return;
+      }
+      const r =
+        action === "name"
+          ? await changeWifiName({ contractId, name: baseName, currentPassword: current })
+          : await changeWifiPassword({ contractId, newPassword: password, bands: selectedBands, currentPassword: current });
+      setConfirmedJob(null);
       setChangeJobRaw(r.job);
       setConfirming(false);
       setPassword("");
+      setBaseName("");
       setCurrent("");
     } catch (e) {
       setError(e?.message || "Não foi possível pedir a alteração agora.");
@@ -217,7 +271,7 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
       ) : null}
 
       {canChange && !busy && !change?.needsConfirmation ? (
-        <form className="wifi-form" onSubmit={(e) => { e.preventDefault(); if (valid) setConfirming(true); }}>
+        <form className="wifi-form" onSubmit={(e) => { e.preventDefault(); if (valid) ask("password"); }}>
           <fieldset className="wifi-bands">
             <legend>Rede</legend>
             {BAND_OPTIONS.filter((o) => o.bands.every((b) => (info.bands ?? []).includes(b))).map((o) => (
@@ -239,18 +293,65 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
         </form>
       ) : null}
 
+      {canChange && !busy && !change?.needsConfirmation ? (
+        <form className="wifi-form wifi-name-form" onSubmit={(e) => { e.preventDefault(); if (!nameError) ask("name"); }}>
+          <label htmlFor="wifi-new-name">Nome do Wi-Fi</label>
+          <input id="wifi-new-name" className="wifi-name-input" value={baseName} onChange={(e) => setBaseName(e.target.value)} maxLength={28} autoComplete="off" spellCheck={false} placeholder="Ex.: Casa da Ana" />
+          {baseName ? (
+            nameError ? <p className="cliente-field-error" role="alert">{nameError}</p> : (
+              <p className="wifi-note">Ficará: <strong>{baseName} 2.4</strong> e <strong>{baseName} 5G</strong>. As duas redes mudam juntas.</p>
+            )
+          ) : <p className="wifi-note">Digite só o nome. O sistema acrescenta 2.4 e 5G e troca as duas redes juntas.</p>}
+          <button type="submit" className="home-btn home-btn-primary" disabled={!!nameError}><Pencil size={16} /> Alterar nome</button>
+          <p className="wifi-note">Depois da alteração, seus aparelhos vão precisar escolher a rede com o novo nome.</p>
+        </form>
+      ) : null}
+
+      {history && history.available && (history.items.length > 0 || history.lastPassword) ? (
+        <div className="wifi-history">
+          <h4><History size={16} /> Últimas alterações</h4>
+          {history.lastPassword ? (
+            revealed ? (
+              <div className="wifi-last-password" role="status">
+                <span>Última senha definida pela Central:</span>
+                <code>{revealed.password}</code>
+                <button type="button" className="home-btn home-btn-ghost" onClick={() => setRevealed(null)}>Ocultar</button>
+              </div>
+            ) : (
+              <button type="button" className="home-btn home-btn-ghost" onClick={() => ask("reveal")}><Eye size={16} /> Ver a última senha</button>
+            )
+          ) : null}
+          <ul>
+            {history.items.map((i) => (
+              <li key={i.id} className={`is-${i.state}`}>
+                <strong>{KIND_LABEL[i.kind] ?? "Wi-Fi"}</strong>
+                <span>{fmtDate(i.finishedAt || i.createdAt)}</span>
+                <span>{i.kind === "change_ssid" && i.names ? `${i.names["2.4GHz"]} / ${i.names["5GHz"]}` : (i.bands ?? []).join(" e ")}</span>
+                <em>{i.state === "completed" ? "Concluída" : i.done ? (i.ticketProtocol ? `Chamado ${i.ticketProtocol}` : "Não concluída") : "Em andamento"}</em>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {confirming ? (
         <div className="wifi-confirm" role="dialog" aria-modal="true" aria-labelledby="wifi-confirm-title">
           <div className="wifi-confirm-box">
-            <h4 id="wifi-confirm-title">Confirmar a nova senha</h4>
-            <p>Rede: <strong>{BAND_OPTIONS.find((o) => o.id === band)?.label}</strong>. Todos os aparelhos conectados vão cair e precisar da nova senha.</p>
+            <h4 id="wifi-confirm-title">{action === "reveal" ? "Ver a última senha" : action === "name" ? "Confirmar o novo nome" : "Confirmar a nova senha"}</h4>
+            {action === "reveal" ? (
+              <p>Por segurança, a senha só aparece depois de você confirmar a senha da Central. Ela some sozinha em 30 segundos.</p>
+            ) : action === "name" ? (
+              <p>Novos nomes: <strong>{baseName} 2.4</strong> e <strong>{baseName} 5G</strong>. Os aparelhos conectados vão cair e precisar escolher a rede de novo.</p>
+            ) : (
+              <p>Rede: <strong>{BAND_OPTIONS.find((o) => o.id === band)?.label}</strong>. Todos os aparelhos conectados vão cair e precisar da nova senha.</p>
+            )}
             <label htmlFor="wifi-current-password">Para sua segurança, digite a senha da Central</label>
             <PasswordInput id="wifi-current-password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" placeholder="Senha da Central" />
             {error ? <p className="cliente-field-error" role="alert">{error}</p> : null}
             <div className="wifi-confirm-actions">
               <button type="button" className="home-btn home-btn-ghost" onClick={() => { setConfirming(false); setError(""); }} disabled={sending}>Cancelar</button>
               <button type="button" className="home-btn home-btn-primary" onClick={submit} disabled={!current || sending}>
-                {sending ? <Loader2 size={16} className="wifi-spin" /> : null} Confirmar alteração
+                {sending ? <Loader2 size={16} className="wifi-spin" /> : null} {action === "reveal" ? "Mostrar senha" : "Confirmar alteração"}
               </button>
             </div>
           </div>

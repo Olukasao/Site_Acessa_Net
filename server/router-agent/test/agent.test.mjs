@@ -329,3 +329,123 @@ test("log nunca leva IP, MAC nem URL do roteador (erro do Playwright vem em vari
   assert.equal(safeError(null), "erro");
   assert.equal(safeError(new Error("x".repeat(500)), 50).length, 50);
 });
+
+test("sair do painel: faz logout, CONFERE que o cookie não vale mais e tenta de novo se ainda valer", async () => {
+  const { HuaweiOntAdapter } = await import("../src/adapters/huaweiOnt.mjs");
+  const montar = (statusPorConsulta) => {
+    const chamadas = { logout: 0, inicio: 0, consultas: 0, fechou: 0 };
+    const page = {
+      waitForResponse: async () => ({}),
+      evaluate: async () => (chamadas.logout++, true),
+      goto: async () => void chamadas.inicio++
+    };
+    const context = { cookies: async () => [{ name: "Cookie", value: "abc" }], close: async () => void chamadas.fechou++ };
+    const http = {
+      request: async (path, init) => {
+        assert.match(path, /WlanBasic/);
+        assert.equal(init.headers.Cookie, "Cookie=abc"); // reusa o cookie da sessao de verdade
+        const status = statusPorConsulta[Math.min(chamadas.consultas++, statusPorConsulta.length - 1)];
+        return { status, text: async () => (status === 200 ? '<input id="wlSsid">' : "negado") };
+      }
+    };
+    return { chamadas, session: { page, context, origin: "https://x" }, ctx: { http } };
+  };
+  const a = new HuaweiOntAdapter({ browserPath: "/nao/usado" });
+
+  // 1) sai de primeira: 1 logout, 1 conferencia, navegador fechado
+  let t = montar([403]);
+  await a.closeSession(t.ctx, t.session);
+  assert.deepEqual([t.chamadas.logout, t.chamadas.inicio, t.chamadas.consultas, t.chamadas.fechou], [1, 0, 1, 1]);
+
+  // 2) a primeira saida nao pegou (sessao ainda vale): abre a pagina inicial e sai de novo
+  t = montar([200, 403]);
+  await a.closeSession(t.ctx, t.session);
+  assert.deepEqual([t.chamadas.logout, t.chamadas.inicio, t.chamadas.consultas, t.chamadas.fechou], [2, 1, 2, 1]);
+
+  // 3) nao da para provar que fechou: fecha o navegador mesmo assim e avisa (erro) para ficar no log
+  t = montar([200, 200]);
+  await assert.rejects(a.closeSession(t.ctx, t.session), /pode ter ficado aberta/);
+  assert.equal(t.chamadas.fechou, 1);
+  assert.equal(t.chamadas.logout, 2);
+});
+
+test("navegador compartilhado: fecha quando ocioso (o faxineiro NÃO renova a ociosidade) e fica aberto enquanto há contexto em uso", async () => {
+  const { __testing, reapBrowsers } = await import("../src/adapters/huaweiOnt.mjs");
+  let abertos = 0;
+  let fechados = 0;
+  const lancar = async () => (abertos++, { isConnected: () => true, on() {}, close: async () => void fechados++, process: () => null });
+  const navegador = await __testing.acquireBrowser(lancar, {});
+  assert.equal(abertos, 1);
+  assert.equal((await __testing.acquireBrowser(lancar, {})) === navegador, true); // reaproveita, nao abre outro
+  assert.equal(abertos, 1);
+
+  // com um contexto em uso nunca fecha, por mais ocioso que pareca
+  const contexto = { close: async () => {} };
+  __testing.register(contexto, navegador);
+  assert.equal(await __testing.closeIdle(0), false);
+  assert.equal(fechados, 0);
+
+  // passadas repetidas do faxineiro (contexto ainda recente) nao fecham nem renovam
+  for (let i = 0; i < 3; i++) await reapBrowsers(4 * 60_000, { idleMs: 0 });
+  assert.equal(fechados, 0);
+});
+
+test("navegador ocioso é fechado numa passada do faxineiro e o próximo pedido abre outro", async () => {
+  const { __testing, reapBrowsers } = await import("../src/adapters/huaweiOnt.mjs");
+  // limpa o contexto do teste anterior (envelhece alem do limite e e encerrado)
+  await reapBrowsers(-1, { idleMs: 0 });
+  assert.deepEqual(__testing.state(), { shared: false, contexts: 0 });
+  let abertos = 0;
+  const lancar = async () => (abertos++, { isConnected: () => true, on() {}, close: async () => {}, process: () => null });
+  await __testing.acquireBrowser(lancar, {});
+  assert.equal(__testing.state().shared, true);
+  // passada do faxineiro com ociosidade de 0 ms: fecha o navegador sem contextos
+  await reapBrowsers(4 * 60_000, { idleMs: 0 });
+  assert.equal(__testing.state().shared, false);
+  await __testing.acquireBrowser(lancar, {});
+  assert.equal(abertos, 2);
+});
+
+test("regra do nome do Wi-Fi: mesmo nome nas duas redes, terminando em ' 2.4' e ' 5G'", async () => {
+  const { validNames } = await import("../src/manager.mjs");
+  const ok = { "2.4GHz": "Casa da Ana 2.4", "5GHz": "Casa da Ana 5G" };
+  assert.deepEqual(validNames(ok), ok);
+  assert.equal(validNames({ "2.4GHz": "Casa 2.4", "5GHz": "Outra 5G" }), null); // nome-base diferente
+  assert.equal(validNames({ "2.4GHz": "Casa", "5GHz": "Casa 5G" }), null); // sem a marca 2.4
+  assert.equal(validNames({ "2.4GHz": "Casa 2.4", "5GHz": "Casa 5" }), null); // sem a marca 5G
+  assert.equal(validNames({ "2.4GHz": "Casa 2.4" }), null); // as duas redes sempre
+  assert.equal(validNames({ "2.4GHz": "Casa 2.4", "5GHz": "Casa 5G", "6GHz": "x" }), null);
+  assert.equal(validNames({ "2.4GHz": "Cása 2.4", "5GHz": "Cása 5G" }), null); // so ASCII seguro
+  assert.equal(validNames({ "2.4GHz": '<b>x</b> 2.4', "5GHz": '<b>x</b> 5G' }), null);
+  assert.equal(validNames({ "2.4GHz": `${"a".repeat(29)} 2.4`, "5GHz": `${"a".repeat(29)} 5G` }), null); // passaria de 32
+  assert.equal(validNames(null), null);
+});
+
+test("troca de nome: confere a regra ANTES de tocar no roteador, troca as duas redes e reporta verificado", async () => {
+  class Nomes extends FakeAdapter {
+    async changeWifiSettings(_c, _s, input) {
+      this.recebido = input;
+      return { verified: true };
+    }
+  }
+  const adapter = new Nomes();
+  registerAdapter(adapter);
+  const m = managerWith({ sgp: fakeVendor });
+  const nomes = { "2.4GHz": "Casa da Ana 2.4", "5GHz": "Casa da Ana 5G" };
+  const { states, report } = recorder();
+  await m.changeWifi({ contractId: "1001", kind: "change_ssid", bands: ["2.4GHz", "5GHz"], params: { names: nomes } }, report);
+  assert.deepEqual(states.map((s) => s.state), ["authenticating", "updating", "verifying", "completed"]);
+  assert.equal(states.at(-1).result.verified, true); // nome e conferido de volta no roteador
+  assert.deepEqual(adapter.recebido.names, nomes);
+  assert.deepEqual(adapter.recebido.bands, ["2.4GHz", "5GHz"]);
+  assert.equal(adapter.recebido.password, undefined); // nome nao mexe na senha
+
+  // nome fora da regra: nem resolve o roteador
+  let tocou = 0;
+  const original = adapter.authenticate.bind(adapter);
+  adapter.authenticate = async (ctx) => (tocou++, original(ctx));
+  const ruim = recorder();
+  await m.changeWifi({ contractId: "1001", kind: "change_ssid", bands: ["2.4GHz", "5GHz"], params: { names: { "2.4GHz": "Casa 2.4", "5GHz": "Outra 5G" } } }, ruim.report);
+  assert.deepEqual(ruim.states.at(-1), { state: "failed", errorCode: "INTERNAL" });
+  assert.equal(tocou, 0);
+});

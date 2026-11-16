@@ -7,7 +7,9 @@ import type { Pool, ResultSetHeader } from "mysql2/promise";
  * roteador e o agente interno (server/router-agent), que busca as tarefas aqui. A senha nova fica so como texto
  * cifrado com a chave publica do agente e e apagada quando a tarefa termina.
  */
-export type RouterJobKind = "status" | "change_password";
+export type RouterJobKind = "status" | "change_password" | "change_ssid";
+/** Tipos que mudam o Wi-Fi do cliente (nunca dois ao mesmo tempo no mesmo contrato). */
+export const CHANGE_KINDS: RouterJobKind[] = ["change_password", "change_ssid"];
 export const ROUTER_JOB_PROGRESS = ["connecting", "authenticating", "updating", "verifying"] as const;
 export const ROUTER_JOB_FINAL = ["completed", "failed", "unsupported", "unconfirmed"] as const;
 export type RouterJobState = "pending" | (typeof ROUTER_JOB_PROGRESS)[number] | (typeof ROUTER_JOB_FINAL)[number];
@@ -42,6 +44,18 @@ export interface RouterJobRecord {
   /** null = ainda nao tratado; "opening" = alguem esta abrindo o chamado; "done" = chamado aberto; "gave_up" = desistiu apos 24 h. */
   fallbackState: "opening" | "done" | "gave_up" | null;
   fallbackTries: number;
+  /** Parametros que nao sao segredo (ex.: novos nomes das redes). */
+  params: Record<string, unknown> | null;
+}
+
+export interface LastPasswordRecord {
+  contractId: string;
+  customerId: string;
+  /** Senha cifrada com a chave da Central. So volta em claro depois de o cliente confirmar a senha da Central. */
+  passwordEnc: string;
+  bands: WifiBand[];
+  jobId: string;
+  setAt: string;
 }
 
 export type InventoryManagement = "available" | "offline" | "unsupported" | "requires_validation" | "unreachable" | "not_identified";
@@ -76,6 +90,8 @@ export interface CreateRouterJobInput {
   kind: RouterJobKind;
   bands: WifiBand[];
   secretEnc: string | null;
+  /** Parametros sem segredo (ex.: { names: { "2.4GHz": "Casa" } }). */
+  params?: Record<string, unknown> | null;
   /** Senha nova cifrada com a chave da propria Central, so para abrir o chamado se a troca automatica nao funcionar. */
   fallbackEnc?: string | null;
   now?: Date;
@@ -93,6 +109,13 @@ export interface RouterWifiRepository {
   findById(id: string): Promise<RouterJobRecord | null>;
   /** Tarefa ainda nao terminada do contrato (uma por vez). */
   findOpen(contractId: string, kind: RouterJobKind): Promise<RouterJobRecord | null>;
+  /** Alguma troca (senha ou nome) ainda nao terminada no contrato. */
+  findOpenChange(contractId: string): Promise<RouterJobRecord | null>;
+  /** Ultimas trocas (senha e nome) do contrato, da mais nova para a mais antiga. */
+  listChanges(contractId: string, limit: number): Promise<RouterJobRecord[]>;
+  saveLastPassword(record: LastPasswordRecord): Promise<void>;
+  getLastPassword(contractId: string): Promise<LastPasswordRecord | null>;
+  deleteLastPassword(contractId: string): Promise<void>;
   /** Ultima tarefa terminada do contrato. */
   latestFinished(contractId: string, kind: RouterJobKind): Promise<RouterJobRecord | null>;
   /** Pega ate `limit` tarefas pendentes para o agente (cada uma so pode ser pega por um agente). */
@@ -155,10 +178,11 @@ interface Row {
   fallback_enc: string | null;
   fallback_state: string | null;
   fallback_tries: number | string | null;
+  params_json: string | null;
 }
 
 const COLUMNS =
-  "id, customer_id, contract_id, kind, bands, secret_enc, state, result_json, error_code, agent_id, created_at, updated_at, claimed_at, finished_at, customer_confirmation, confirmed_at, ticket_protocol, notified_at, fallback_enc, fallback_state, fallback_tries";
+  "id, customer_id, contract_id, kind, bands, secret_enc, state, result_json, error_code, agent_id, created_at, updated_at, claimed_at, finished_at, customer_confirmation, confirmed_at, ticket_protocol, notified_at, fallback_enc, fallback_state, fallback_tries, params_json";
 const OPEN_STATES = "('pending','connecting','authenticating','updating','verifying')";
 const FINAL_STATES = "('completed','failed','unsupported','unconfirmed')";
 
@@ -193,7 +217,8 @@ function mapRow(row: Row): RouterJobRecord {
     notifiedAt: row.notified_at,
     hasFallback: Boolean(row.fallback_enc),
     fallbackState: row.fallback_state === "opening" || row.fallback_state === "done" || row.fallback_state === "gave_up" ? row.fallback_state : null,
-    fallbackTries: Number(row.fallback_tries ?? 0)
+    fallbackTries: Number(row.fallback_tries ?? 0),
+    params: parseJson<Record<string, unknown> | null>(row.params_json, null)
   };
 }
 
@@ -210,8 +235,8 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
     const id = randomUUID();
     const now = (input.now ?? new Date()).toISOString();
     await this.db.run(
-      "INSERT INTO router_wifi_jobs (id, customer_id, contract_id, kind, bands, secret_enc, fallback_enc, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-      [id, input.customerId, input.contractId, input.kind, JSON.stringify(input.bands), input.secretEnc, input.fallbackEnc ?? null, now, now]
+      "INSERT INTO router_wifi_jobs (id, customer_id, contract_id, kind, bands, secret_enc, fallback_enc, params_json, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+      [id, input.customerId, input.contractId, input.kind, JSON.stringify(input.bands), input.secretEnc, input.fallbackEnc ?? null, input.params ? JSON.stringify(input.params) : null, now, now]
     );
     return (await this.findById(id))!;
   }
@@ -227,6 +252,46 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
       [contractId, kind]
     );
     return rows[0] ? mapRow(rows[0]) : null;
+  }
+
+  async findOpenChange(contractId: string) {
+    const rows = await this.db.all(
+      `SELECT ${COLUMNS} FROM router_wifi_jobs WHERE contract_id = ? AND kind IN ('change_password','change_ssid') AND state IN ${OPEN_STATES} ORDER BY created_at DESC LIMIT 1`,
+      [contractId]
+    );
+    return rows[0] ? mapRow(rows[0]) : null;
+  }
+
+  async listChanges(contractId: string, limit: number) {
+    const rows = await this.db.all(
+      `SELECT ${COLUMNS} FROM router_wifi_jobs WHERE contract_id = ? AND kind IN ('change_password','change_ssid') ORDER BY created_at DESC LIMIT ?`,
+      [contractId, limit]
+    );
+    return rows.map(mapRow);
+  }
+
+  async saveLastPassword(record: LastPasswordRecord) {
+    const changed = await this.db.run(
+      "UPDATE router_wifi_last_password SET customer_id = ?, password_enc = ?, bands = ?, job_id = ?, set_at = ? WHERE contract_id = ?",
+      [record.customerId, record.passwordEnc, JSON.stringify(record.bands), record.jobId, record.setAt, record.contractId]
+    );
+    if (changed === 0) {
+      await this.db.run("INSERT INTO router_wifi_last_password (contract_id, customer_id, password_enc, bands, job_id, set_at) VALUES (?, ?, ?, ?, ?, ?)", [
+        record.contractId, record.customerId, record.passwordEnc, JSON.stringify(record.bands), record.jobId, record.setAt
+      ]);
+    }
+  }
+
+  async getLastPassword(contractId: string) {
+    const rows = (await this.db.all("SELECT contract_id, customer_id, password_enc, bands, job_id, set_at FROM router_wifi_last_password WHERE contract_id = ?", [contractId])) as unknown as Array<{
+      contract_id: string; customer_id: string; password_enc: string; bands: string; job_id: string; set_at: string;
+    }>;
+    const row = rows[0];
+    return row ? { contractId: row.contract_id, customerId: row.customer_id, passwordEnc: row.password_enc, bands: parseJson<WifiBand[]>(row.bands, []), jobId: row.job_id, setAt: row.set_at } : null;
+  }
+
+  async deleteLastPassword(contractId: string) {
+    await this.db.run("DELETE FROM router_wifi_last_password WHERE contract_id = ?", [contractId]);
   }
 
   async latestFinished(contractId: string, kind: RouterJobKind) {
@@ -326,7 +391,7 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
     // "Roteador aceitou" fica de fora: nesse caso quem decide e o cliente ("Conseguiu conectar?").
     const rows = await this.db.all(
       `SELECT ${COLUMNS} FROM router_wifi_jobs
-        WHERE kind = 'change_password' AND created_at >= ? AND fallback_enc IS NOT NULL AND ticket_protocol IS NULL
+        WHERE kind IN ('change_password','change_ssid') AND created_at >= ? AND (fallback_enc IS NOT NULL OR kind = 'change_ssid') AND ticket_protocol IS NULL
           AND (fallback_state IS NULL OR (fallback_state = 'opening' AND updated_at < ?)) AND fallback_tries < 30 AND customer_confirmation IS NULL
           AND (state IN ('failed','unsupported') OR (state = 'unconfirmed' AND (error_code IS NULL OR error_code <> 'ACCEPTED_NOT_VERIFIED')))
         ORDER BY created_at ASC LIMIT ?`,

@@ -40,13 +40,13 @@ const bound = (promise, ms) => Promise.race([Promise.resolve(promise).catch(() =
  * roteador e memoria do servidor.
  */
 let sharedBrowser = null; // Promise<Browser>
-let idleTimer = null;
+let lastBrowserActivity = Date.now();
 const liveContexts = new Map(); // context -> { browser, since }
 const MAX_CONTEXT_MS = 4 * 60_000;
 const BROWSER_IDLE_MS = 90_000;
 
 async function acquireBrowser(launch, options) {
-  clearTimeout(idleTimer);
+  touchBrowserActivity();
   if (sharedBrowser) {
     const existing = await sharedBrowser.catch(() => null);
     if (existing?.isConnected?.()) return existing;
@@ -66,24 +66,47 @@ async function acquireBrowser(launch, options) {
   }
 }
 
-function scheduleBrowserIdleClose() {
-  clearTimeout(idleTimer);
-  if (liveContexts.size > 0 || !sharedBrowser) return;
-  idleTimer = setTimeout(async () => {
-    if (liveContexts.size > 0 || !sharedBrowser) return;
-    const promise = sharedBrowser;
-    sharedBrowser = null;
-    const browser = await promise.catch(() => null);
-    if (browser) await killBrowser(browser);
-  }, BROWSER_IDLE_MS);
-  idleTimer.unref?.();
+/** Marca atividade do navegador compartilhado (um pedido abriu ou fechou um contexto): a ociosidade conta a partir daqui. */
+function touchBrowserActivity() {
+  lastBrowserActivity = Date.now();
+}
+
+/** Fecha o navegador compartilhado se ninguem o usa ha `idleMs`. Quem chama a cada passada e o faxineiro (nao ha mais contador que se reinicia). */
+async function closeIdleBrowser(idleMs) {
+  if (liveContexts.size > 0 || !sharedBrowser) return false;
+  if (Date.now() - lastBrowserActivity < idleMs) return false;
+  const promise = sharedBrowser;
+  sharedBrowser = null;
+  const browser = await promise.catch(() => null);
+  if (browser) await killBrowser(browser);
+  return Boolean(browser);
+}
+
+const liveSessions = new Map(); // context -> { page, origin }  (para sair do painel antes de encerrar um navegador)
+
+/**
+ * Sai do painel do roteador pelo proprio painel (logout), com prazo. Devolve true se o painel recebeu o pedido de sair.
+ * `abrirInicio`: se a pagina atual nao tem a funcao de sair, abre a pagina inicial (que tem) e tenta de novo.
+ */
+async function logoutPanel(session, { abrirInicio = false } = {}) {
+  const { page, origin } = session;
+  if (abrirInicio) await bound(page.goto(`${origin}/index.asp`, { waitUntil: "domcontentloaded", timeout: 8000 }), 10_000);
+  const chamou = await bound(
+    Promise.all([
+      bound(page.waitForResponse((r) => /\/logout\.cgi/.test(r.url()), { timeout: 4000 }), 4500),
+      page.evaluate(() => (typeof window.logoutfunc === "function" ? (window.logoutfunc(), true) : false))
+    ]).then(([, ok]) => ok),
+    6000
+  );
+  return chamou === true;
 }
 
 async function closeContext(context) {
+  liveSessions.delete(context);
   const info = liveContexts.get(context);
   liveContexts.delete(context);
   await bound(context.close(), 6000);
-  scheduleBrowserIdleClose();
+  touchBrowserActivity();
   return info;
 }
 
@@ -97,7 +120,6 @@ export async function killBrowser(browser) {
 }
 /** Encerramento do agente: fecha todos os contextos e o navegador compartilhado (nao deixa processo de navegador orfao). */
 export async function shutdownBrowsers() {
-  clearTimeout(idleTimer);
   await reapBrowsers(0);
   const promise = sharedBrowser;
   sharedBrowser = null;
@@ -105,19 +127,30 @@ export async function shutdownBrowsers() {
   if (browser) await killBrowser(browser);
 }
 
-export async function reapBrowsers(maxAgeMs = MAX_CONTEXT_MS) {
+export async function reapBrowsers(maxAgeMs = MAX_CONTEXT_MS, { idleMs = BROWSER_IDLE_MS } = {}) {
   let reaped = 0;
   for (const [context, info] of [...liveContexts]) {
     if (Date.now() - info.since < maxAgeMs) continue;
     liveContexts.delete(context);
+    const sessao = liveSessions.get(context);
+    if (sessao) await bound(logoutPanel(sessao, { abrirInicio: true }), 12_000); // sai do painel antes de encerrar
     await bound(context.close(), 6000);
     // contexto que nao fecha: derruba o navegador inteiro (os outros pedidos, se houver, falham e viram "nao confirmado")
     if (info.browser?.isConnected?.()) await killBrowser(info.browser);
     reaped++;
   }
-  scheduleBrowserIdleClose();
+  if (reaped) touchBrowserActivity(); // so conta como atividade se encerrou algo; passar o faxineiro NAO renova a ociosidade
+  await closeIdleBrowser(idleMs);
   return reaped;
 }
+
+/** So para testes: registra um contexto como aberto e le o estado do navegador compartilhado. */
+export const __testing = {
+  acquireBrowser: (launch, options) => acquireBrowser(launch, options),
+  register: (context, browser) => liveContexts.set(context, { browser, since: Date.now() }),
+  closeIdle: (idleMs) => closeIdleBrowser(idleMs),
+  state: () => ({ shared: Boolean(sharedBrowser), contexts: liveContexts.size })
+};
 setInterval(() => void reapBrowsers(), 30_000).unref();
 
 export class HuaweiOntAdapter extends BaseRouterAdapter {
@@ -162,6 +195,7 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
     const { chromium } = await import("playwright-core");
     const browser = await timed("router.navegador", () => acquireBrowser(this.launch ?? ((o) => chromium.launch(o)), { headless: true, executablePath: this.browserPath }));
     let context = null;
+    let loggedIn = false; // true = ha sessao aberta no roteador (precisa sair antes de fechar o navegador)
     try {
       context = await browser.newContext({ ignoreHTTPSErrors: true, javaScriptEnabled: true, acceptDownloads: false });
       liveContexts.set(context, { browser, since: Date.now() });
@@ -169,6 +203,7 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
       // o navegador so fala com o roteador: qualquer outro destino e bloqueado
       await context.route("**/*", (route) => (new URL(route.request().url()).origin === origin ? route.continue() : route.abort()));
       const page = await context.newPage();
+      liveSessions.set(context, { page, origin });
       page.setDefaultTimeout(20000);
       const dialogs = [];
       page.on("dialog", async (d) => {
@@ -184,6 +219,7 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
         await page.locator('input[type=button], button').filter({ hasText: /^\s*Log In\s*$/ }).or(page.locator('input[type=button][value="Log In"]')).filter({ visible: true }).first().click();
         await resposta;
       });
+      loggedIn = true; // daqui em diante ha sessao aberta no roteador: qualquer falha precisa sair antes de fechar
       const session = { browser, context, page, origin, dialogs, preloaded: null };
       const info = await this.#openBand(session, "2.4GHz", 20000);
       // a pagina de Wi-Fi so abre com sessao valida; se voltou a tela de login, a senha foi recusada
@@ -191,6 +227,9 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
       session.preloaded = { band: "2.4GHz", info };
       return session;
     } catch (error) {
+      // a senha pode ter sido aceita e a falha vir depois (pagina nao abriu, etc.): sai do painel antes de fechar o navegador
+      const sessao = context ? liveSessions.get(context) : null;
+      if (sessao && loggedIn) await logoutPanel(sessao, { abrirInicio: true }).catch(() => false);
       if (context) await closeContext(context);
       throw error;
     }
@@ -264,29 +303,45 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
     }
   }
 
-  async changeWifiPassword(_ctx, session, input) {
+  /** Mantida por compatibilidade: so a senha. */
+  async changeWifiPassword(ctx, session, input) {
+    return this.changeWifiSettings(ctx, session, { password: input.password, bands: input.bands });
+  }
+
+  /**
+   * Troca senha e/ou NOME das redes, so pelo formulario do proprio painel (o painel monta o envio).
+   * Nome: conferido de volta no roteador (verified = true). Senha: o roteador esconde, nao da para conferir (verified = false).
+   */
+  async changeWifiSettings(_ctx, session, input) {
+    const names = input.names ?? null;
     session.applied = [];
     session.ssids = {};
-    // Configuracao das duas redes ANTES de qualquer troca (so a senha pode mudar). Cada pagina de Wi-Fi traz as duas redes, entao
-    // abrir a pagina da proxima rede ja prova, lendo do roteador, que a rede anterior so mudou a senha.
+    // Configuracao das duas redes ANTES de qualquer troca. Cada pagina de Wi-Fi traz as duas redes, entao abrir a pagina da proxima
+    // rede ja prova, lendo do roteador, que a anterior mudou so o que devia (senha e/ou o nome pedido).
     let baseline = null;
-    const igual = (a, b) => Boolean(a) && Boolean(b) && a.ssid === b.ssid && a.beacon === b.beacon && a.wpa === b.wpa && a.i11 === b.i11 && a.mix === b.mix && a.enc === b.enc;
+    const igual = (a, b, ssidEsperado) => Boolean(a) && Boolean(b) && (ssidEsperado ?? a.ssid) === b.ssid && a.beacon === b.beacon && a.wpa === b.wpa && a.i11 === b.i11 && a.mix === b.mix && a.enc === b.enc;
     for (const band of input.bands) {
       const before = await this.readBand(session, band);
       if (!before.ssid) throw fail("ROUTER_UNSUPPORTED", `rede ${band} nao encontrada`);
-      if (!PSK_MODES.has(String(before.auth).toLowerCase()) || !before.pskField) throw fail("ROUTER_UNSUPPORTED", `rede ${band} nao usa senha WPA`);
-      session.ssids[band] = before.ssid.slice(0, 32);
+      if (input.password && (!PSK_MODES.has(String(before.auth).toLowerCase()) || !before.pskField)) throw fail("ROUTER_UNSUPPORTED", `rede ${band} nao usa senha WPA`);
+      session.ssids[band] = (names?.[band] ?? before.ssid).slice(0, 32);
       if (!baseline) baseline = before.config ?? {};
       for (const feita of session.applied) {
-        if (baseline[feita] && !igual(baseline[feita], before.config?.[feita])) throw fail("INTERNAL", "a rede mudou alem da senha");
+        if (baseline[feita] && !igual(baseline[feita], before.config?.[feita], names?.[feita])) throw fail("INTERNAL", "a rede mudou alem do pedido");
       }
       let saved = false;
       // o painel recusa salvar enquanto aplica outra mudanca (aviso na tela): espera um pouco e tenta de novo, uma vez
       for (let attempt = 0; attempt < 2 && !saved; attempt++) {
         const dialogsBefore = session.dialogs.length;
         const res = await timed(`router.aplicar.${band}`, async () => {
-          await session.page.fill(before.pskField, input.password);
-          await session.page.dispatchEvent(before.pskField, "change");
+          if (input.password) {
+            await session.page.fill(before.pskField, input.password);
+            await session.page.dispatchEvent(before.pskField, "change");
+          }
+          if (names?.[band]) {
+            await session.page.fill("#wlSsid", names[band]);
+            await session.page.dispatchEvent("#wlSsid", "change");
+          }
           const response = session.page.waitForResponse((r) => /\/set\.cgi\?/.test(r.url()) && r.request().method() === "POST", { timeout: attempt === 0 ? 12000 : 30000 });
           await session.page.click("#btnApplySubmit");
           return response.catch(() => null);
@@ -308,11 +363,13 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
     if (ultima) {
       const depois = await timed(`router.reler.${ultima}`, () => this.readWhenBack(session, ultima));
       if (baseline?.[ultima] && depois.config?.[ultima]) {
-        if (!igual(baseline[ultima], depois.config[ultima])) throw fail("INTERNAL", "a rede mudou alem da senha");
+        if (!igual(baseline[ultima], depois.config[ultima], names?.[ultima])) throw fail("INTERNAL", "a rede mudou alem do pedido");
       } else if (!depois.ssid || depois.ssid.slice(0, 32) !== session.ssids[ultima]) {
-        throw fail("INTERNAL", "a rede mudou alem da senha");
+        throw fail("INTERNAL", "a rede mudou alem do pedido");
       }
     }
+    // nome: o proprio roteador mostrou o nome novo (verificado); senha: nao ha como ler
+    return { verified: Boolean(names) && !input.password };
   }
 
   /** A senha volta mascarada: nao ha como reler. O roteador aceitou e a rede continua igual, mas isso nao e prova. */
@@ -320,27 +377,36 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
     return false;
   }
 
-  async closeSession(_ctx, session) {
-    return timed("router.sair", () => this.#closeSession(session));
+  async closeSession(ctx, session) {
+    return timed("router.sair", () => this.#closeSession(session, ctx));
   }
 
-  async #closeSession(session) {
+  async #closeSession(session, ctx) {
+    let ativa = true;
     try {
-      // a pagina de Wi-Fi ja traz a funcao de sair: usa ela (sem abrir a pagina inicial). Cada passo tem prazo.
-      const saiu = await bound(
-        Promise.all([
-          bound(session.page.waitForResponse((r) => /\/logout\.cgi/.test(r.url()), { timeout: 4000 }), 4500),
-          session.page.evaluate(() => (typeof window.logoutfunc === "function" ? (window.logoutfunc(), true) : false))
-        ]).then(([, chamou]) => chamou),
-        6000
-      );
-      if (!saiu) {
-        await bound(session.page.goto(`${session.origin}/index.asp`, { waitUntil: "domcontentloaded", timeout: 8000 }), 10_000);
-        await bound(session.page.evaluate(() => (typeof window.logoutfunc === "function" ? window.logoutfunc() : null)), 5000);
-        await bound(session.page.waitForTimeout(1200), 3000);
+      // Sai no modo logout do proprio painel e CONFERE: reusar o cookie da sessao nao pode mais funcionar. Duas tentativas.
+      for (let tentativa = 0; tentativa < 2 && ativa !== false; tentativa++) {
+        await logoutPanel(session, { abrirInicio: tentativa === 1 }).catch(() => false);
+        ativa = await this.#sessionStillActive(ctx, session);
       }
     } finally {
       await closeContext(session.context);
+    }
+    // nao conseguimos provar que a sessao fechou: o chamador registra o aviso (o roteador solta a sessao sozinho depois de um tempo)
+    if (ativa === true) throw fail("INTERNAL", "a sessao do painel pode ter ficado aberta");
+  }
+
+  /** A sessao ainda vale? Reusa o cookie num pedido comum (com o certificado fixado). true = ainda vale, false = encerrada, null = nao deu para saber. */
+  async #sessionStillActive(ctx, session) {
+    try {
+      const cookies = (await bound(session.context.cookies(), 3000)) ?? [];
+      const cookie = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+      if (!cookie || !ctx?.http) return null;
+      const res = await ctx.http.request("/html/amp/wlanbasic/WlanBasic.asp?2G", { headers: { Cookie: cookie } });
+      const texto = await res.text();
+      return res.status === 200 && /wlSsid/.test(texto) && !/txt_Password/.test(texto);
+    } catch {
+      return null;
     }
   }
 }

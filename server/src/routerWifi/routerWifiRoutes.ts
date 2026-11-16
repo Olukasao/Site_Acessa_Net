@@ -15,6 +15,15 @@ const changeBody = z
     currentPassword: z.string().min(1).max(200)
   })
   .strict();
+const nameBody = z
+  .object({
+    contractId: z.string().trim().min(1).max(64),
+    // so o nome: o sistema acrescenta " 2.4" e " 5G" e troca as duas redes juntas
+    name: z.string().min(1).max(60),
+    currentPassword: z.string().min(1).max(200)
+  })
+  .strict();
+const revealBody = z.object({ contractId: z.string().trim().min(1).max(64), currentPassword: z.string().min(1).max(200) }).strict();
 const claimBody = z
   .object({
     agentId: z.string().regex(/^[a-zA-Z0-9_.-]{1,64}$/),
@@ -100,6 +109,49 @@ export async function registerRouterWifiRoutes(app: FastifyInstance, container: 
     });
     reply.code(202);
     return { job };
+  });
+
+  /** Troca o NOME do Wi-Fi (sempre as duas redes, mantendo 2.4 e 5G no final). */
+  app.post("/api/customer/wifi/name", async (request, reply) => {
+    const auth = requireAuth(request);
+    const body = parseBody(nameBody, request.body);
+    const job = await service.changeName({ customerId: auth.customerId, cpfHash: auth.cpfHash, ip: request.ip, contractId: body.contractId, name: body.name, currentPassword: body.currentPassword });
+    request.log.info({ tag: "ROUTER_WIFI", jobId: job.id, contractId: body.contractId }, "[ROUTER_WIFI] troca de nome pedida");
+    await container.centralActivityService.safeRecordAuthenticated({
+      auth,
+      request,
+      eventType: "CUSTOM",
+      page: "internet",
+      contractId: body.contractId,
+      metadata: { action: "WIFI_NAME_CHANGE" }
+    });
+    reply.code(202);
+    return { job };
+  });
+
+  /** Historico das ultimas trocas (senha e nome). Nunca traz senha. */
+  app.get("/api/customer/wifi/history", async (request) => {
+    const auth = requireAuth(request);
+    const { contractId } = parseQuery(contractQuery, request.query);
+    return service.history(auth.customerId, contractId);
+  });
+
+  /** Mostra a ultima senha definida pela Central. Exige a senha da Central de novo; nunca vai para cache nem para o log. */
+  app.post("/api/customer/wifi/last-password", async (request, reply) => {
+    const auth = requireAuth(request);
+    const body = parseBody(revealBody, request.body);
+    const out = await service.revealLastPassword({ customerId: auth.customerId, cpfHash: auth.cpfHash, contractId: body.contractId, currentPassword: body.currentPassword });
+    reply.header("Cache-Control", "no-store");
+    request.log.info({ tag: "ROUTER_WIFI", contractId: body.contractId }, "[ROUTER_WIFI] ultima senha exibida ao titular");
+    await container.centralActivityService.safeRecordAuthenticated({
+      auth,
+      request,
+      eventType: "CUSTOM",
+      page: "internet",
+      contractId: body.contractId,
+      metadata: { action: "WIFI_PASSWORD_REVEAL" }
+    });
+    return out;
   });
 
   app.get("/api/customer/wifi/jobs/:jobId", async (request) => {

@@ -5,6 +5,20 @@ import { timed, timingsStore } from "./timing.mjs";
 import { ipAllowed, routerBaseUrl } from "./policy.mjs";
 
 const PROBE_TTL_MS = 10 * 60_000;
+
+/**
+ * Regra dos nomes do Wi-Fi: as duas redes, com o MESMO nome-base, terminando em " 2.4" (2,4 GHz) e " 5G" (5 GHz); so o que vem antes muda.
+ * Confere de novo aqui (defesa em profundidade) porque quem monta os nomes e a Central, mas quem mexe no roteador e este agente.
+ */
+export function validNames(names) {
+  const a = names?.["2.4GHz"];
+  const b = names?.["5GHz"];
+  if (typeof a !== "string" || typeof b !== "string") return null;
+  if (!/^[A-Za-z0-9 ._-]{1,28} 2\.4$/.test(a) || !/^[A-Za-z0-9 ._-]{1,28} 5G$/.test(b)) return null;
+  if (a.slice(0, -4) !== b.slice(0, -3)) return null;
+  if (a !== a.trim() || b !== b.trim() || Object.keys(names).length !== 2) return null;
+  return { "2.4GHz": a, "5GHz": b };
+}
 const VENDOR_LABEL = { tplink: "TP-Link", huawei: "Huawei", stavix: "Stavix", mercusys: "Mercusys" };
 const KNOWN_CODES = new Set(["ROUTER_OFFLINE", "ROUTER_UNSUPPORTED", "ROUTER_REQUIRES_VALIDATION", "ROUTER_UNREACHABLE", "ROUTER_AUTH_FAILED", "ROUTER_NOT_IDENTIFIED", "SGP_UNAVAILABLE", "CONTRACT_NOT_FOUND", "VERIFY_FAILED", "INTERNAL"]);
 const codeOf = (error) => (KNOWN_CODES.has(error?.code) ? error.code : "INTERNAL");
@@ -255,7 +269,20 @@ export class RouterManager {
     }, report);
   }
 
+  /** Mantida por compatibilidade com quem chama "changePassword". */
   async changePassword(job, report) {
+    return this.changeWifi(job, report);
+  }
+
+  /** Troca de senha ("change_password") ou de nome ("change_ssid") das duas redes. */
+  async changeWifi(job, report) {
+    const porNome = job.kind === "change_ssid";
+    let names = null;
+    if (porNome) {
+      // regra: nome igual nas duas redes, terminando em " 2.4" e " 5G"; confere ANTES de tocar no roteador
+      names = validNames(job.params?.names);
+      if (!names) return report("failed", { errorCode: "INTERNAL" });
+    }
     let r;
     try {
       r = await this.resolve(job.contractId);
@@ -273,19 +300,19 @@ export class RouterManager {
     if (stop) return report(stop[0], { errorCode: stop[1] });
     if (r.adapter.support !== "supported" || this.d.dryRun) return report("unsupported", { errorCode: "ROUTER_REQUIRES_VALIDATION" });
 
-    const secret = this.d.decrypt(job.secretEnc);
+    const secret = porNome ? null : this.d.decrypt(job.secretEnc);
     try {
       return await this.withRouter(r, async (ctx, session) => {
         await report("updating");
         let applied = false;
         try {
-          await r.adapter.changeWifiPassword(ctx, session, { password: secret.toString("utf8"), bands: job.bands });
+          const feito = await r.adapter.changeWifiSettings(ctx, session, { password: secret?.toString("utf8"), names, bands: porNome ? ["2.4GHz", "5GHz"] : job.bands });
           applied = true;
           if (session?.ssids && Object.keys(session.ssids).length) this.ssidCache.set(job.contractId, { ...(this.ssidCache.get(job.contractId) ?? {}), ...session.ssids });
           await report("verifying");
-          const verified = await r.adapter.verifyWifiConfiguration(ctx, session, { password: secret.toString("utf8"), bands: job.bands });
-          // accepted: o roteador aceitou e a rede continua igual (nao e prova de que a senha mudou; a Central mostra "nao confirmado")
-          return report("completed", { result: { bands: job.bands, verified: verified === true, accepted: true, vendor: VENDOR_LABEL[r.vendor] ?? null, model: r.model ?? null } });
+          // nome: ja conferido de volta no roteador; senha: o roteador esconde, entao "aceito" (o cliente confirma depois)
+          const verified = porNome ? feito?.verified === true : (await r.adapter.verifyWifiConfiguration(ctx, session, { password: secret?.toString("utf8"), bands: job.bands })) === true;
+          return report("completed", { result: { bands: porNome ? ["2.4GHz", "5GHz"] : job.bands, verified, accepted: true, vendor: VENDOR_LABEL[r.vendor] ?? null, model: r.model ?? null } });
         } catch (error) {
           this.d.log?.warn?.(`[router-agent] troca ${r.vendor}: ${safeError(error)}`);
           // Depois de mandar a alteracao nao da para saber se o roteador aplicou: nao confirmado (e nunca repetimos sozinhos).
@@ -294,7 +321,7 @@ export class RouterManager {
         }
       }, report);
     } finally {
-      secret.fill(0);
+      secret?.fill(0);
     }
   }
 

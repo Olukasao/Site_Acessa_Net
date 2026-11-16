@@ -8,6 +8,7 @@ import type { InMemoryStore } from "../repositories/inMemoryStore.js";
 import { OwnershipService } from "../security/ownership.js";
 import { sha256, verifyPassword } from "../security/hash.js";
 import {
+  CHANGE_KINDS,
   ROUTER_JOB_FINAL,
   ROUTER_JOB_PROGRESS,
   isFinalState,
@@ -47,6 +48,8 @@ const FALLBACK_KEEP_MS = 24 * 60 * 60_000;
 /** Quem esta abrindo o chamado ha mais que isto e considerado caido (o servidor reiniciou no meio): outro processo retoma. */
 const OPENING_STALE_MS = 2 * 60_000;
 
+/** Ver a ultima senha: poucas vezes por hora (e sempre com a senha da Central). */
+const REVEAL_LIMIT = { limit: 5, windowMs: 60 * 60_000 };
 const CHANGE_PER_CUSTOMER = { limit: 3, windowMs: 60 * 60_000 };
 const CHANGE_PER_CONTRACT = { limit: 5, windowMs: 24 * 60 * 60_000 };
 const CHANGE_PER_IP = { limit: 10, windowMs: 60 * 60_000 };
@@ -122,6 +125,25 @@ export function validateWifiPassword(value: string): string | null {
   return null;
 }
 
+/** Marca que fica SEMPRE no fim do nome de cada rede: o cliente muda so o que vem antes. */
+export const SSID_TAGS: Record<WifiBand, string> = { "2.4GHz": "2.4", "5GHz": "5G" };
+const SSID_BASE_MAX = 28; // 32 (limite do Wi-Fi) - " 2.4"/" 5G"
+
+/** O cliente digita so o nome; o sistema acrescenta " 2.4" e " 5G". Devolve o motivo se o nome nao serve. */
+export function validateWifiBaseName(value: string): string | null {
+  if (!value || value !== value.trim()) return value ? "O nome não pode começar nem terminar com espaço." : "Digite o nome do Wi-Fi.";
+  if (value.length > SSID_BASE_MAX) return `O nome pode ter no máximo ${SSID_BASE_MAX} caracteres (o sistema acrescenta 2.4 e 5G).`;
+  if (!/^[A-Za-z0-9 ._-]+$/.test(value)) return "Use só letras sem acento, números, espaço, ponto, hífen e sublinhado.";
+  if (/\s{2,}/.test(value)) return "Use um espaço só entre as palavras.";
+  if (/(^|[\s_-])(2\.4|5g|2\.4ghz|5ghz)$/i.test(value)) return "Digite só o nome: o sistema já acrescenta 2.4 e 5G no final.";
+  return null;
+}
+
+/** Os dois nomes que vao para o roteador (sempre as duas redes, sempre com 2.4 e 5G no fim). */
+export function buildWifiNames(base: string): Record<WifiBand, string> {
+  return { "2.4GHz": `${base} ${SSID_TAGS["2.4GHz"]}`, "5GHz": `${base} ${SSID_TAGS["5GHz"]}` };
+}
+
 export interface PublicRouterJob {
   id: string;
   kind: RouterJobRecord["kind"];
@@ -137,6 +159,8 @@ export interface PublicRouterJob {
   ticketProtocol: string | null;
   /** A troca automatica nao funcionou e a Central ja abriu (ou esta abrindo) o chamado com os dados do cliente. */
   fallbackTicket: boolean;
+  /** Novos nomes das redes (pedido de troca de nome; nao e segredo). */
+  names: Record<string, string> | null;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -150,7 +174,12 @@ const awaitsCustomer = (job: RouterJobRecord) =>
   Boolean(job.finishedAt) &&
   Date.now() - Date.parse(job.finishedAt!) < CONFIRM_WINDOW_MS;
 
+const hasMemo = (job: RouterJobRecord) => job.hasFallback || job.kind === "change_ssid";
+const isChange = (job: RouterJobRecord) => job.kind === "change_password" || job.kind === "change_ssid";
+const failedWithoutCustomer = (job: RouterJobRecord) => isChange(job) && !job.customerConfirmation && isFinalState(job.state) && job.state !== "completed" && job.errorCode !== "ACCEPTED_NOT_VERIFIED";
+
 export function publicJob(job: RouterJobRecord): PublicRouterJob {
+  const what = job.kind === "change_ssid" ? "o nome do Wi-Fi" : "a senha";
   return {
     id: job.id,
     kind: job.kind,
@@ -158,10 +187,12 @@ export function publicJob(job: RouterJobRecord): PublicRouterJob {
     done: isFinalState(job.state),
     bands: job.bands,
     message:
-      job.kind === "change_password" && !job.customerConfirmation && isFinalState(job.state) && job.state !== "completed" && job.errorCode !== "ACCEPTED_NOT_VERIFIED" && (job.ticketProtocol || job.hasFallback)
+      failedWithoutCustomer(job) && (job.ticketProtocol || hasMemo(job))
         ? job.ticketProtocol
-          ? `Não conseguimos trocar a senha automaticamente. Abrimos o chamado ${job.ticketProtocol} e nossa equipe troca para você.`
-          : "Não conseguimos trocar a senha automaticamente. Já guardamos o seu pedido e estamos abrindo o chamado para nossa equipe trocar para você."
+          ? `Não conseguimos trocar ${what} automaticamente. Abrimos o chamado ${job.ticketProtocol} e nossa equipe troca para você.`
+          : `Não conseguimos trocar ${what} automaticamente. Já guardamos o seu pedido e estamos abrindo o chamado para nossa equipe trocar para você.`
+        : job.kind === "change_ssid" && job.state === "completed"
+        ? "Pronto! O nome do Wi-Fi foi alterado nas duas redes. Seus aparelhos vão precisar escolher a rede de novo."
         : job.customerConfirmation === "not_connected"
         ? job.ticketProtocol
           ? `Abrimos o chamado ${job.ticketProtocol} para nossa equipe resolver.`
@@ -176,7 +207,8 @@ export function publicJob(job: RouterJobRecord): PublicRouterJob {
     needsConfirmation: awaitsCustomer(job),
     confirmation: job.customerConfirmation,
     ticketProtocol: job.ticketProtocol,
-    fallbackTicket: job.kind === "change_password" && !job.customerConfirmation && (Boolean(job.ticketProtocol) || (job.hasFallback && job.state !== "completed" && job.errorCode !== "ACCEPTED_NOT_VERIFIED" && isFinalState(job.state))),
+    fallbackTicket: isChange(job) && !job.customerConfirmation && (Boolean(job.ticketProtocol) || (hasMemo(job) && failedWithoutCustomer(job))),
+    names: job.kind === "change_ssid" && job.params && typeof job.params.names === "object" ? (job.params.names as Record<string, string>) : null,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     finishedAt: job.finishedAt
@@ -254,9 +286,22 @@ export class RouterWifiService {
    * de troca pelo atendimento, para o tecnico trocar no roteador). A senha sai do banco assim que o chamado abre.
    */
   private async buildTicketDescription(job: RouterJobRecord, reason: string): Promise<string> {
-    const password = this.decryptFallback(await this.repo.getFallbackEnc(job.id));
     const when = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(job.finishedAt ?? job.updatedAt));
     const roteador = (job.result as { vendor?: string | null; model?: string | null } | null) ?? null;
+    if (job.kind === "change_ssid") {
+      const names = (job.params?.names ?? {}) as Record<string, string>;
+      return [
+        "Troca do NOME do Wi-Fi pedida pelo cliente na Central do Assinante.",
+        reason,
+        ...Object.entries(names).map(([band, name]) => `Rede ${band.replace("GHz", " GHz")}: novo nome "${name}".`),
+        roteador?.vendor ? `Roteador: ${[roteador.vendor, roteador.model].filter(Boolean).join(" ")}.` : "",
+        `Tentativa automática em ${when}.`,
+        "Trocar o nome das duas redes no roteador do cliente (mantendo 2.4 e 5G no final) e avisar."
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+    const password = this.decryptFallback(await this.repo.getFallbackEnc(job.id));
     return [
       "Troca de senha do Wi-Fi pedida pelo cliente na Central do Assinante.",
       reason,
@@ -277,11 +322,11 @@ export class RouterWifiService {
   async ensureFallbackTicket(jobId: string): Promise<void> {
     if (!this.hooks) return;
     const job = await this.repo.findById(jobId);
-    if (!job || job.kind !== "change_password" || job.ticketProtocol || !job.hasFallback || job.customerConfirmation) return;
+    if (!job || !isChange(job) || job.ticketProtocol || !hasMemo(job) || job.customerConfirmation) return;
     if (!isFinalState(job.state) || job.state === "completed" || job.errorCode === "ACCEPTED_NOT_VERIFIED") return;
     if (!(await this.repo.claimFallback(jobId, new Date(), new Date(Date.now() - OPENING_STALE_MS)))) return;
     try {
-      const reason = `A troca automática NÃO funcionou (${job.errorCode ?? job.state}). Se algo foi aplicado no roteador, pode ter sido só em parte.`;
+      const reason = `A ${job.kind === "change_ssid" ? "troca do nome" : "troca"} automática NÃO funcionou (${job.errorCode ?? job.state}). Se algo foi aplicado no roteador, pode ter sido só em parte.`;
       const ticket = await this.hooks.openTicket({ customerId: job.customerId, contractId: job.contractId, description: await this.buildTicketDescription(job, reason) });
       await this.repo.finishFallback(jobId, ticket.protocol);
     } catch {
@@ -372,17 +417,11 @@ export class RouterWifiService {
     const bands = [...new Set(input.bands)];
     if (!bands.length || !bands.every((band) => WIFI_BANDS.includes(band))) throw new AppError(422, "INVALID_BANDS", "Escolha a rede 2.4 GHz, 5 GHz ou as duas.");
 
-    // Confirma que e o titular: pede de novo a senha da Central (a sessao sozinha nao basta para mexer no roteador).
-    const reauthKey = `router_wifi:reauth:${input.cpfHash}`;
-    await this.limiter.consume(`${reauthKey}:check`, REAUTH_FAILURES);
-    const profile = await this.authProfiles.findByCpfHash(input.cpfHash);
-    if (!profile?.passwordHash || !(await verifyPassword(input.currentPassword, profile.passwordHash))) {
-      throw new AppError(403, "REAUTH_FAILED", "Senha da Central incorreta.");
-    }
+    await this.reauth(input.cpfHash, input.currentPassword);
 
     // Ja ha uma troca em andamento: responde isso antes de gastar as cotas (clicar de novo nao pode consumir o limite do cliente)
     await this.expire(true);
-    if (await this.repo.findOpen(input.contractId, "change_password")) {
+    if (await this.repo.findOpenChange(input.contractId)) {
       throw new AppError(409, "WIFI_CHANGE_IN_PROGRESS", "Já existe uma alteração em andamento. Aguarde terminar.");
     }
     await this.limiter.consume(`router_wifi:change:customer:${input.customerId}`, CHANGE_PER_CUSTOMER);
@@ -397,13 +436,86 @@ export class RouterWifiService {
     return publicJob(job);
   }
 
+  /** Confirma que e o titular: pede de novo a senha da Central (a sessao sozinha nao basta). */
+  private async reauth(cpfHash: string, currentPassword: string) {
+    await this.limiter.consume(`router_wifi:reauth:${cpfHash}:check`, REAUTH_FAILURES);
+    const profile = await this.authProfiles.findByCpfHash(cpfHash);
+    if (!profile?.passwordHash || !(await verifyPassword(currentPassword, profile.passwordHash))) {
+      throw new AppError(403, "REAUTH_FAILED", "Senha da Central incorreta.");
+    }
+  }
+
+  /**
+   * Troca o NOME do Wi-Fi. O cliente digita so o nome; o sistema acrescenta " 2.4" e " 5G" e troca SEMPRE as duas redes juntas.
+   * A conferencia e real (le o nome de volta no roteador), entao termina "concluido" sem pedir confirmacao ao cliente.
+   */
+  async changeName(input: { customerId: string; cpfHash: string; ip: string; contractId: string; name: string; currentPassword: string }) {
+    await this.ownership.assertContract(input.customerId, input.contractId);
+    if (!this.availableFor(input.contractId)) throw new AppError(404, "WIFI_MANAGER_UNAVAILABLE", "A alteração do Wi-Fi pela Central ainda não está disponível para você.");
+    if (!(await this.agentOnline())) throw new AppError(503, "WIFI_AGENT_OFFLINE", ERROR_MESSAGES.AGENT_OFFLINE!);
+
+    const problem = validateWifiBaseName(input.name);
+    if (problem) throw new AppError(422, "INVALID_WIFI_NAME", problem);
+    const names = buildWifiNames(input.name);
+
+    await this.reauth(input.cpfHash, input.currentPassword);
+    await this.expire(true);
+    if (await this.repo.findOpenChange(input.contractId)) {
+      throw new AppError(409, "WIFI_CHANGE_IN_PROGRESS", "Já existe uma alteração em andamento. Aguarde terminar.");
+    }
+    await this.limiter.consume(`router_wifi:name:customer:${input.customerId}`, CHANGE_PER_CUSTOMER);
+    await this.limiter.consume(`router_wifi:name:contract:${input.contractId}`, CHANGE_PER_CONTRACT);
+    await this.limiter.consume(`router_wifi:change:ip:${sha256(input.ip)}`, CHANGE_PER_IP);
+
+    const job = await this.repo.create({ customerId: input.customerId, contractId: input.contractId, kind: "change_ssid", bands: [...WIFI_BANDS], secretEnc: null, params: { names } });
+    return publicJob(job);
+  }
+
+  /** Historico das ultimas trocas (senha e nome) do contrato. Nunca traz senha: so quando, quais redes e como terminou. */
+  async history(customerId: string, contractId: string) {
+    await this.ownership.assertContract(customerId, contractId);
+    if (!this.availableFor(contractId)) return { available: false, items: [], lastPassword: null };
+    const jobs = (await this.repo.listChanges(contractId, 10)).filter((j) => j.customerId === customerId);
+    const last = await this.repo.getLastPassword(contractId);
+    return {
+      available: true,
+      items: jobs.map((j) => ({
+        id: j.id,
+        kind: j.kind,
+        bands: j.bands,
+        names: j.kind === "change_ssid" && j.params?.names ? (j.params.names as Record<string, string>) : null,
+        state: j.state,
+        done: isFinalState(j.state),
+        message: publicJob(j).message,
+        ticketProtocol: j.ticketProtocol,
+        createdAt: j.createdAt,
+        finishedAt: j.finishedAt
+      })),
+      // so informa que existe e quando foi; a senha so sai em revealLastPassword, depois de confirmar a senha da Central
+      lastPassword: last && last.customerId === customerId ? { setAt: last.setAt, bands: last.bands } : null
+    };
+  }
+
+  /** Mostra a ultima senha definida pela Central, so depois de o titular confirmar a senha da Central. Fica cifrada no banco. */
+  async revealLastPassword(input: { customerId: string; cpfHash: string; contractId: string; currentPassword: string }) {
+    await this.ownership.assertContract(input.customerId, input.contractId);
+    if (!this.availableFor(input.contractId)) throw new AppError(404, "WIFI_MANAGER_UNAVAILABLE", "Esta função ainda não está disponível para você.");
+    await this.limiter.consume(`router_wifi:reveal:customer:${input.customerId}`, REVEAL_LIMIT);
+    await this.reauth(input.cpfHash, input.currentPassword);
+    const last = await this.repo.getLastPassword(input.contractId);
+    if (!last || last.customerId !== input.customerId) throw new AppError(404, "NO_LAST_PASSWORD", "Não há uma senha guardada para este contrato.");
+    const password = this.decryptFallback(last.passwordEnc);
+    if (!password) throw new AppError(410, "LAST_PASSWORD_UNREADABLE", "Não foi possível recuperar a senha guardada. Troque a senha de novo.");
+    return { password, bands: last.bands, setAt: last.setAt };
+  }
+
   /** Acompanhamento: o cliente so ve as proprias tarefas. */
   async getJob(customerId: string, jobId: string) {
     await this.expire();
     let job = await this.repo.findById(jobId);
     if (!job || job.customerId !== customerId) throw new AppError(404, "RESOURCE_NOT_FOUND", "Solicitação não encontrada.");
     // pedido que parou (agente caiu) e ainda nao virou chamado: abre agora, para a resposta ja trazer o protocolo
-    if (job.kind === "change_password" && job.hasFallback && !job.ticketProtocol && isFinalState(job.state)) {
+    if (isChange(job) && hasMemo(job) && !job.ticketProtocol && isFinalState(job.state)) {
       await this.ensureFallbackTicket(jobId);
       job = (await this.repo.findById(jobId)) ?? job;
     }
@@ -425,7 +537,7 @@ export class RouterWifiService {
       jobs = await this.repo.claim(agentId, limit, new Date());
     }
     // O agente recebe so o contrato e o segredo cifrado; nada de cliente/CPF.
-    return jobs.map((job) => ({ id: job.id, contractId: job.contractId, kind: job.kind, bands: job.bands, secretEnc: job.secretEnc }));
+    return jobs.map((job) => ({ id: job.id, contractId: job.contractId, kind: job.kind, bands: job.bands, secretEnc: job.secretEnc, params: job.params }));
   }
 
   async report(jobId: string, body: unknown) {
@@ -442,21 +554,32 @@ export class RouterWifiService {
       if (!ok.success) throw new AppError(422, "INVALID_RESULT", "Resultado inválido.");
       result = ok.data as Record<string, unknown>;
     }
-    // "Concluido" de troca de senha exige verificacao: sem ela vira "nao confirmado".
+    // "Concluido" exige verificacao: troca de senha sem ela vira "nao confirmado" (o roteador esconde a senha); troca de nome sem ela e falha.
     let finalState: RouterJobState = state;
     let finalError = errorCode ?? null;
-    if (job.kind === "change_password" && state === "completed" && (result as { verified?: boolean } | null)?.verified !== true) {
+    const verified = (result as { verified?: boolean } | null)?.verified === true;
+    if (job.kind === "change_password" && state === "completed" && !verified) {
       finalState = "unconfirmed";
       finalError = finalError ?? ((result as { accepted?: boolean } | null)?.accepted === true ? "ACCEPTED_NOT_VERIFIED" : "VERIFY_FAILED");
     }
+    if (job.kind === "change_ssid" && state === "completed" && !verified) {
+      finalState = "unconfirmed";
+      finalError = finalError ?? "VERIFY_FAILED";
+    }
     if ((finalState === "failed" || finalState === "unsupported") && !finalError) finalError = "INTERNAL";
 
+    // a senha memorizada (cifrada) vira "ultima senha" se a troca foi aceita; ler ANTES do update, que apaga a copia quando conclui
+    const memorized = job.kind === "change_password" ? await this.repo.getFallbackEnc(jobId) : null;
     const ok = await this.repo.update(jobId, agentId, { state: finalState, result, errorCode: finalError, now: new Date() });
     if (!ok) throw new AppError(409, "JOB_ALREADY_FINISHED", "A tarefa já terminou.");
-    // Senha trocada (confirmada ou aceita pelo roteador): avisa o titular, uma vez, sem atrasar a resposta ao agente.
-    if (job.kind === "change_password" && (finalState === "completed" || finalError === "ACCEPTED_NOT_VERIFIED")) {
+    const accepted = finalState === "completed" || finalError === "ACCEPTED_NOT_VERIFIED";
+    if (job.kind === "change_password" && accepted && memorized) {
+      await this.repo.saveLastPassword({ contractId: job.contractId, customerId: job.customerId, passwordEnc: memorized, bands: job.bands, jobId, setAt: new Date().toISOString() });
+    }
+    // Troca aceita (confirmada ou aceita pelo roteador): avisa o titular, uma vez, sem atrasar a resposta ao agente.
+    if (isChange(job) && accepted) {
       void this.notifyOnce(jobId).catch(() => undefined);
-    } else if (job.kind === "change_password" && isFinalState(finalState)) {
+    } else if (isChange(job) && isFinalState(finalState)) {
       // a troca automatica nao funcionou: memoriza e abre o chamado
       void this.ensureFallbackTicket(jobId).catch(() => undefined);
     }
@@ -479,6 +602,11 @@ export class RouterWifiService {
 
     const done = await this.repo.confirm(job.id, input.customerId, input.connected ? "connected" : "not_connected", new Date());
     if (!done) throw new AppError(409, "WIFI_ALREADY_CONFIRMED", "Você já respondeu sobre esta alteração.");
+    // o cliente disse que a senha nova NAO funcionou: ela nao vale como "ultima senha"
+    if (!input.connected) {
+      const last = await this.repo.getLastPassword(job.contractId);
+      if (last?.jobId === job.id) await this.repo.deleteLastPassword(job.contractId);
+    }
 
     if (!input.connected) {
       const description = await this.buildTicketDescription(

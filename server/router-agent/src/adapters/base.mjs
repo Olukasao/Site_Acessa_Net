@@ -33,6 +33,12 @@ export class BaseRouterAdapter {
   async changeWifiPassword(_ctx, _session, _input) {
     throw notImplemented(this);
   }
+  /** Senha e/ou nome. Padrao: so senha (adaptadores que nao trocam nome recusam o pedido de nome). */
+  async changeWifiSettings(ctx, session, input) {
+    if (input.names) throw notImplemented(this);
+    await this.changeWifiPassword(ctx, session, { password: input.password, bands: input.bands });
+    return { verified: false };
+  }
   /** Prova de que a alteracao valeu (ex.: reler a configuracao). "HTTP 200" sozinho nao basta. */
   async verifyWifiConfiguration(_ctx, _session, _input) {
     return false;

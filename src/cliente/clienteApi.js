@@ -221,6 +221,7 @@ function resolveDemoRequest(method, fullPath, body) {
   if (path.startsWith("/api/customer/wifi/")) {
     if (method === "GET" && path === "/api/customer/wifi/status") return { available: false, agentOnline: false, job: null, pendingChange: null };
     if (method === "GET" && path === "/api/customer/wifi/availability") return { available: false, agentOnline: false };
+    if (method === "GET" && path === "/api/customer/wifi/history") return { available: false, items: [], lastPassword: null };
     throw new ClienteApiError(409, "DEMO_MODE", "Alteração do Wi-Fi não está disponível no modo demonstração.");
   }
 
@@ -949,6 +950,21 @@ export async function getWifiStatus(contractId, signal) {
 /** Pede a troca da senha do Wi-Fi. So contrato, redes e senhas: o servidor descobre o roteador sozinho. */
 export async function changeWifiPassword({ contractId, newPassword, bands, currentPassword }) {
   return clienteRequest("/api/customer/wifi/password", { method: "POST", body: { contractId, newPassword, bands, currentPassword } });
+}
+
+/** Troca o NOME do Wi-Fi: so o nome-base; o servidor acrescenta " 2.4" e " 5G" e troca as duas redes juntas. */
+export async function changeWifiName({ contractId, name, currentPassword }) {
+  return clienteRequest("/api/customer/wifi/name", { method: "POST", body: { contractId, name, currentPassword } });
+}
+
+/** Ultimas trocas (senha e nome) do contrato. Nunca traz senha. */
+export async function getWifiHistory(contractId, signal) {
+  return clienteRequest(`/api/customer/wifi/history?contractId=${encodeURIComponent(contractId)}`, { signal });
+}
+
+/** Mostra a ultima senha definida pela Central, depois de confirmar a senha da Central. */
+export async function revealWifiLastPassword({ contractId, currentPassword }) {
+  return clienteRequest("/api/customer/wifi/last-password", { method: "POST", body: { contractId, currentPassword } });
 }
 
 /** So pergunta se a troca automatica esta disponivel agora (nao cria tarefa nem consulta o roteador). */
