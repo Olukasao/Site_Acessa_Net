@@ -218,14 +218,23 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
         await d.accept().catch(() => undefined);
       });
       await timed("router.login.pagina", () => page.goto(`${origin}/`, { waitUntil: "domcontentloaded" }));
-      await page.fill("#txt_Username", ctx.credentials.username ?? "");
-      await page.fill("#txt_Password", ctx.credentials.password);
       // Depois do login.cgi o painel manda para a pagina inicial (index.asp), que aqui nao serve para nada: vamos direto a pagina de Wi-Fi.
+      // Painel que NAO responde ao login (lento/ocupado) ganha uma segunda tentativa; resposta de "senha errada" nunca e repetida.
+      let respondeu = false;
       await timed("router.login.enviar", async () => {
-        const resposta = page.waitForResponse((r) => /\/login\.cgi/.test(r.url()), { timeout: 20000 });
-        await page.locator('input[type=button], button').filter({ hasText: /^\s*Log In\s*$/ }).or(page.locator('input[type=button][value="Log In"]')).filter({ visible: true }).first().click();
-        await resposta;
+        for (let tentativa = 0; tentativa < 2 && !respondeu; tentativa++) {
+          if (tentativa > 0) {
+            await page.waitForTimeout(3000);
+            await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
+          }
+          await page.fill("#txt_Username", ctx.credentials.username ?? "");
+          await page.fill("#txt_Password", ctx.credentials.password);
+          const resposta = page.waitForResponse((r) => /\/login\.cgi/.test(r.url()), { timeout: 25000 });
+          await page.locator('input[type=button], button').filter({ hasText: /^\s*Log In\s*$/ }).or(page.locator('input[type=button][value="Log In"]')).filter({ visible: true }).first().click();
+          respondeu = await resposta.then(() => true, () => false);
+        }
       });
+      if (!respondeu) throw fail("ROUTER_UNREACHABLE", "o painel nao respondeu ao login");
       loggedIn = true; // daqui em diante ha sessao aberta no roteador: qualquer falha precisa sair antes de fechar
       const session = { browser, context, page, origin, dialogs, preloaded: null };
       const info = await this.#openBand(session, "2.4GHz", 20000);
