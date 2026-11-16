@@ -19,6 +19,7 @@ export function validNames(names) {
   if (a !== a.trim() || b !== b.trim() || Object.keys(names).length !== 2) return null;
   return { "2.4GHz": a, "5GHz": b };
 }
+const SSID_TTL_MS = 30 * 60_000;
 const VENDOR_LABEL = { tplink: "TP-Link", huawei: "Huawei", stavix: "Stavix", mercusys: "Mercusys" };
 const KNOWN_CODES = new Set(["ROUTER_OFFLINE", "ROUTER_UNSUPPORTED", "ROUTER_REQUIRES_VALIDATION", "ROUTER_UNREACHABLE", "ROUTER_AUTH_FAILED", "ROUTER_NOT_IDENTIFIED", "SGP_UNAVAILABLE", "CONTRACT_NOT_FOUND", "VERIFY_FAILED", "INTERNAL"]);
 const codeOf = (error) => (KNOWN_CODES.has(error?.code) ? error.code : "INTERNAL");
@@ -100,6 +101,16 @@ export class RouterManager {
     } finally {
       if (lock.running === 0 && lock.queue.length === 0) this.perRouter.delete(ip);
     }
+  }
+
+  /** Nomes das redes lembrados por este contrato (valem por 30 min: o cliente pode ter mudado no proprio roteador). null = nao sabe. */
+  cachedSsids(contractId) {
+    const hit = this.ssidCache.get(contractId);
+    if (!hit || Date.now() - hit.at > SSID_TTL_MS) return null;
+    return hit.names;
+  }
+  learnSsids(contractId, names) {
+    this.ssidCache.set(contractId, { names, at: Date.now() });
   }
 
   /** Descobre o roteador do contrato. Devolve { outcome, ... } sem tocar no roteador. */
@@ -235,7 +246,9 @@ export class RouterManager {
     // Leitura rapida (sem login no painel): modelo e redes vem do que ja foi validado para o modelo; os nomes das redes, do que ja
     // aprendemos neste contrato. Com ROUTER_STATUS_READ_SSID=1 volta a ler os nomes no proprio roteador (leva ~10 s a mais).
     const rapido = !this.d.statusReadsSsid && typeof r.adapter.quickStatus === "function" ? r.adapter.quickStatus(r.model) : null;
-    if (rapido) {
+    // sem o nome da rede (nunca lido, ou lido ha muito tempo) a leitura entra no painel uma vez para mostrar o nome atual
+    const nomes = this.cachedSsids(job.contractId);
+    if (rapido && nomes) {
       return report("completed", {
         result: this.statusResult({
           online: true,
@@ -243,14 +256,14 @@ export class RouterManager {
           model: r.model ?? null,
           management: "available",
           bands: rapido.bands,
-          ssids: this.ssidCache.get(job.contractId) ?? {},
+          ssids: nomes,
           canChangePassword: true
         })
       });
     }
     return this.withRouter(r, async (ctx, session) => {
       const info = await r.adapter.getWifiInfo(ctx, session);
-      if (info.ssids && Object.keys(info.ssids).length) this.ssidCache.set(job.contractId, info.ssids);
+      if (info.ssids && Object.keys(info.ssids).length) this.learnSsids(job.contractId, info.ssids);
       if (!info.bands?.length) {
         // nao leu nenhuma rede: nunca diz "troca disponivel" sem saber quais redes existem
         this.d.log?.warn?.(`[router-agent] ${r.vendor}: nenhuma rede lida (${(info.errors ?? []).join("; ") || "sem detalhe"})`);
@@ -311,7 +324,7 @@ export class RouterManager {
         try {
           const feito = await r.adapter.changeWifiSettings(ctx, session, { password: secret?.toString("utf8"), names, bands: porNome ? ["2.4GHz", "5GHz"] : job.bands });
           applied = true;
-          if (session?.ssids && Object.keys(session.ssids).length) this.ssidCache.set(job.contractId, { ...(this.ssidCache.get(job.contractId) ?? {}), ...session.ssids });
+          if (session?.ssids && Object.keys(session.ssids).length) this.learnSsids(job.contractId, { ...(this.cachedSsids(job.contractId) ?? {}), ...session.ssids });
           await report("verifying");
           // nome: ja conferido de volta no roteador; senha: o roteador esconde, entao "aceito" (o cliente confirma depois)
           const verified = porNome ? feito?.verified === true : (await r.adapter.verifyWifiConfiguration(ctx, session, { password: secret?.toString("utf8"), bands: job.bands })) === true;

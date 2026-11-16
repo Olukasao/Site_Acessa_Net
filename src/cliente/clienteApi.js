@@ -59,7 +59,7 @@ const DEMO_CATEGORIES = [
     title: "Problema no Wi-Fi",
     description: "Sinal fraco, rede não aparece ou alguns aparelhos não conectam."
   },
-  { id: "router_password", title: "Troca de senha do roteador", description: "Solicitar alteração da senha do Wi-Fi." },
+  { id: "router_password", title: "Troca de senha ou nome do Wi-Fi", description: "Alterar a senha ou o nome da sua rede Wi-Fi." },
   { id: "websites", title: "Alguns sites não funcionam", description: "Um site ou serviço específico não abre." },
   { id: "equipment", title: "Equipamento/modem", description: "Luzes, cabos, energia ou equipamento." },
   { id: "phone", title: "Telefone", description: "Problemas relacionados ao telefone fixo." },
