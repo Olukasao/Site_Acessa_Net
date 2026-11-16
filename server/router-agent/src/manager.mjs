@@ -60,6 +60,21 @@ export class RouterManager {
     this.d = deps;
   }
 
+  /**
+   * Um acesso por vez a cada roteador, em TUDO que toca nele (consultar certificado/pagina de login e a sessao do painel):
+   * esses roteadores sao pequenos e travam se receberem conexoes ao mesmo tempo (a pagina de Wi-Fi nao carrega).
+   */
+  async underRouterLock(ip, fn) {
+    this.perRouter ??= new Map();
+    if (!this.perRouter.has(ip)) this.perRouter.set(ip, new Limiter(1));
+    const lock = this.perRouter.get(ip);
+    try {
+      return await lock.run(fn, { waitMs: 120_000 });
+    } finally {
+      if (lock.running === 0 && lock.queue.length === 0) this.perRouter.delete(ip);
+    }
+  }
+
   /** Descobre o roteador do contrato. Devolve { outcome, ... } sem tocar no roteador. */
   async resolve(contractId) {
     const access = await this.d.sgp.verificaAcesso(contractId);
@@ -73,27 +88,30 @@ export class RouterManager {
     if (eq.vendor === "customer_owned") return { outcome: "unsupported", vendor: eq.vendor, conn };
     // IP fora da faixa liberada: nao conectamos em nada
     if (!ipAllowed(conn.ip, this.d.cidrs)) return { outcome: "unreachable", vendor: eq.vendor, conn };
-    // Sem "Tipo equipamento" no SGP: tenta reconhecer pelo proprio roteador (so certificado conhecido + pagina de login, sem login)
-    const vendor = eq.vendor ?? (await this.detectVendor(conn.ip));
-    if (!vendor) return { outcome: "not_identified", conn };
-    const adapter = adapterFor(vendor);
-    if (!adapter) return { outcome: "unsupported", vendor, conn };
-    const baseUrl = routerBaseUrl(conn.ip, vendor, this.d.endpoints, this.d.cidrs);
-    // fabricante sem porta/protocolo configurado: ainda em validacao
-    if (!baseUrl) return { outcome: "requires_validation", vendor, conn, adapter };
-    const pins = this.d.endpoints[vendor]?.pins ?? [];
-    let model = null;
-    if (adapter.support === "supported") {
-      try {
-        model = (await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins }) })).model;
-      } catch (error) {
-        if (error?.code === "ROUTER_CERT_UNKNOWN") return { outcome: "requires_validation", vendor, conn, adapter };
-        throw error;
+    // Tudo daqui em diante pode tocar no roteador (certificado e pagina de login): um acesso por vez
+    return this.underRouterLock(conn.ip, async () => {
+      // Sem "Tipo equipamento" no SGP: tenta reconhecer pelo proprio roteador (so certificado conhecido + pagina de login, sem login)
+      const vendor = eq.vendor ?? (await this.detectVendor(conn.ip));
+      if (!vendor) return { outcome: "not_identified", conn };
+      const adapter = adapterFor(vendor);
+      if (!adapter) return { outcome: "unsupported", vendor, conn };
+      const baseUrl = routerBaseUrl(conn.ip, vendor, this.d.endpoints, this.d.cidrs);
+      // fabricante sem porta/protocolo configurado: ainda em validacao
+      if (!baseUrl) return { outcome: "requires_validation", vendor, conn, adapter };
+      const pins = this.d.endpoints[vendor]?.pins ?? [];
+      let model = null;
+      if (adapter.support === "supported") {
+        try {
+          model = (await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins }) })).model;
+        } catch (error) {
+          if (error?.code === "ROUTER_CERT_UNKNOWN") return { outcome: "requires_validation", vendor, conn, adapter };
+          throw error;
+        }
+        // so o modelo validado em bancada e alterado; os outros do mesmo fabricante ficam "em validacao"
+        if (typeof adapter.supportsModel === "function" && !adapter.supportsModel(model)) return { outcome: "requires_validation", vendor, model, conn, adapter };
       }
-      // so o modelo validado em bancada e alterado; os outros do mesmo fabricante ficam "em validacao"
-      if (typeof adapter.supportsModel === "function" && !adapter.supportsModel(model)) return { outcome: "requires_validation", vendor, model, conn, adapter };
-    }
-    return { outcome: "ok", vendor, model, conn, adapter, baseUrl, pins };
+      return { outcome: "ok", vendor, model, conn, adapter, baseUrl, pins };
+    });
   }
 
   /** Reconhece o fabricante pelo certificado (pin) e pela pagina de login. Nunca tenta senha. */
@@ -126,6 +144,7 @@ export class RouterManager {
     const eq = await this.d.sgp.equipmentType(access.serviceId);
     if (eq.vendor === "customer_owned") return entry("unsupported", { vendor: "customer_owned" });
     if (!ipAllowed(conn.ip, this.d.cidrs)) return entry("unreachable", { vendor: eq.vendor });
+    return this.underRouterLock(conn.ip, async () => {
     const detected = await this.detectVendor(conn.ip);
     const vendor = eq.vendor ?? detected;
     if (vendor) {
@@ -142,6 +161,7 @@ export class RouterManager {
     const probe = Object.entries(this.d.endpoints).find(([, ep]) => ep.protocol === "https");
     const cert = probe ? await peekCertificate(`https://${conn.ip}:${probe[1].port}`, this.d.routerTimeoutMs) : null;
     return entry(cert?.ok ? "not_identified" : "unreachable", { certSubject: cert?.subject ?? null, certFp: cert?.fingerprint ?? null });
+    });
   }
 
   statusResult(base, extra = {}) {
@@ -235,11 +255,6 @@ export class RouterManager {
   /** Conecta, autentica, executa e sempre encerra a sessao do painel. Tudo com prazo: nada fica preso. */
   async withRouter(r, fn, report) {
     const limiter = this.d.perVendor.get(r.vendor) ?? this.d.perVendor.get("*");
-    // um acesso por vez a cada roteador: o painel aceita poucas sessoes e um login novo derruba o anterior
-    this.perRouter ??= new Map();
-    const key = r.conn.ip;
-    if (!this.perRouter.has(key)) this.perRouter.set(key, new Limiter(1));
-    const routerLock = this.perRouter.get(key);
     const t0 = Date.now();
     const fase = (nome) => {
       const seg = Math.round((Date.now() - t0) / 1000);
@@ -271,11 +286,10 @@ export class RouterManager {
               );
             }
             fase("saida");
-            if (routerLock.running <= 1 && routerLock.queue.length === 0) this.perRouter.delete(key);
           }
         },
         { waitMs: 120_000 }
       );
-    return routerLock.run(trabalho, { waitMs: 120_000 });
+    return this.underRouterLock(r.conn.ip, trabalho);
   }
 }

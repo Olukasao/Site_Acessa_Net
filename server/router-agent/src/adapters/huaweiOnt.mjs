@@ -137,7 +137,8 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
     const errors = [];
     for (const band of ["2.4GHz", "5GHz"]) {
       try {
-        const info = await this.readBand(session, band);
+        // logo depois de uma troca o roteador demora a voltar a abrir a pagina de Wi-Fi: espera ele voltar
+        const info = await this.readWhenBack(session, band, 45_000);
         if (info?.ssid) {
           bands.push(band);
           ssids[band] = info.ssid.slice(0, 32);

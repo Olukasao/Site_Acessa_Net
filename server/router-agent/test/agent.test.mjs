@@ -287,3 +287,35 @@ test("pedido que a Central já encerrou: o agente para antes de entrar no rotead
   assert.equal(entrou, 0); // nunca fez login no roteador
   assert.equal(adapter.changed, null);
 });
+
+test("dois pedidos para o mesmo roteador nunca tocam nele ao mesmo tempo (consulta e sessão do painel)", async () => {
+  let ativos = 0;
+  let maximo = 0;
+  const ocupa = async (ms) => {
+    ativos++;
+    maximo = Math.max(maximo, ativos);
+    await new Promise((r) => setTimeout(r, ms));
+    ativos--;
+  };
+  class Lento extends FakeAdapter {
+    async identify() {
+      await ocupa(15); // consulta rapida antes do login (certificado/pagina de login)
+      return { vendor: "fake", model: "M1", confirmed: true };
+    }
+    async authenticate(ctx) {
+      await ocupa(20);
+      return super.authenticate(ctx);
+    }
+    async getWifiInfo() {
+      await ocupa(20);
+      return { bands: ["2.4GHz"], ssids: { "2.4GHz": "Casa" } };
+    }
+  }
+  registerAdapter(new Lento());
+  const m = managerWith({ sgp: fakeVendor });
+  const feitos = [];
+  const report = async (state, extra) => void feitos.push([state, extra?.errorCode]);
+  await Promise.all([m.status({ contractId: "1001", kind: "status" }, report), m.status({ contractId: "1001", kind: "status" }, report), m.status({ contractId: "1001", kind: "status" }, report)]);
+  assert.equal(maximo, 1); // nunca dois ao mesmo tempo no mesmo roteador
+  assert.equal(feitos.filter(([s]) => s === "completed").length, 3);
+});
