@@ -203,6 +203,27 @@ export async function migrateMysql(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS router_wifi_jobs (
+      id VARCHAR(36) PRIMARY KEY,
+      customer_id VARCHAR(191) NOT NULL,
+      contract_id VARCHAR(64) NOT NULL,
+      kind VARCHAR(24) NOT NULL,
+      bands VARCHAR(64) NOT NULL,
+      secret_enc TEXT NULL,
+      state VARCHAR(24) NOT NULL,
+      result_json TEXT NULL,
+      error_code VARCHAR(48) NULL,
+      agent_id VARCHAR(64) NULL,
+      created_at VARCHAR(32) NOT NULL,
+      updated_at VARCHAR(32) NOT NULL,
+      claimed_at VARCHAR(32) NULL,
+      finished_at VARCHAR(32) NULL,
+      INDEX idx_router_wifi_jobs_state (state, created_at),
+      INDEX idx_router_wifi_jobs_contract (contract_id, kind, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS app_crashes (
       id BIGINT AUTO_INCREMENT PRIMARY KEY,
       signature VARCHAR(64) NOT NULL,

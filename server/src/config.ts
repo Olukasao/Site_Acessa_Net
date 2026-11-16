@@ -123,6 +123,13 @@ export interface AppConfig {
   marketingFeed: {
     token: string | undefined;
   };
+  /** Gerenciar meu Wi-Fi (troca de senha do roteador pelo agente interno). Ver src/routerWifi e server/router-agent. */
+  routerWifi: {
+    enabled: boolean;
+    agentToken: string | undefined;
+    agentPublicKey: string | undefined;
+    pilotContracts: string[];
+  };
   wifi: {
     /** Segredo compartilhado com o radius-bridge. Vazio = rota de autorizacao desligada. */
     radiusToken: string | undefined;
@@ -409,6 +416,12 @@ export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
       audience: unwrapEnv(process.env.CHAT_TOKEN_AUDIENCE) ?? "acessanet-chat-api",
       pushToken: unwrapEnv(process.env.CHAT_PUSH_TOKEN)
     },
+    routerWifi: {
+      enabled: ["1", "true", "yes", "on"].includes(String(process.env.ROUTER_WIFI_ENABLED ?? "").toLowerCase()),
+      agentToken: unwrapEnv(process.env.ROUTER_AGENT_TOKEN),
+      agentPublicKey: unwrapEnv(process.env.ROUTER_AGENT_PUBLIC_KEY),
+      pilotContracts: parseCsv(process.env.ROUTER_WIFI_PILOT_CONTRACTS ?? "")
+    },
     wifi: {
       radiusToken: unwrapEnv(process.env.WIFI_RADIUS_TOKEN),
       sessionHours: Number(process.env.WIFI_SESSION_HOURS ?? 4),
@@ -468,6 +481,7 @@ export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
       ...base.acessanetConnect,
       ...overrides.acessanetConnect
     },
+    routerWifi: { ...base.routerWifi, ...overrides.routerWifi },
     wifi: { ...base.wifi, ...overrides.wifi },
     oltCloud: {
       ...base.oltCloud,

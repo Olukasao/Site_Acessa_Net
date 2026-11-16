@@ -87,6 +87,7 @@ import {
 } from "./clienteApi";
 import NoticeBanner from "./central/NoticeBanner";
 import VisitLocationCard from "./central/VisitLocationCard";
+import WifiManagerCard from "./central/WifiManagerCard";
 import ToastHost, { showToast } from "./central/Toast";
 import { LocationCaptureField, isNativeApp, submitLocation } from "./central/locationCapture";
 import NetworkIncidentBanner from "./central/NetworkIncidentBanner";
@@ -2290,6 +2291,8 @@ function InternetPage({ connection, contract, loading }) {
           ]}
         />
       </section>
+
+      <WifiManagerCard contract={contract} />
     </div>
   );
 }

@@ -6,6 +6,8 @@ import { PasswordResetService } from "./auth/passwordResetService.js";
 import { PersistentRateLimiter } from "./auth/persistentRateLimiter.js";
 import { SqlitePushDeviceRepository, MysqlPushDeviceRepository, type PushDeviceRepository } from "./repositories/pushDeviceRepository.js";
 import { SqliteAppCrashRepository, MysqlAppCrashRepository, type AppCrashRepository } from "./repositories/appCrashRepository.js";
+import { SqliteRouterWifiRepository, MysqlRouterWifiRepository, type RouterWifiRepository } from "./routerWifi/routerWifiRepository.js";
+import { RouterWifiService } from "./routerWifi/routerWifiService.js";
 import { SqliteLocationRequestRepository, MysqlLocationRequestRepository, type LocationRequestRepository } from "./repositories/locationRequestRepository.js";
 import { SqliteTicketRatingRepository, MysqlTicketRatingRepository, type TicketRatingRepository } from "./repositories/ticketRatingRepository.js";
 import { SqliteRateLimitRepository, MysqlRateLimitRepository, type RateLimitRepository } from "./repositories/rateLimitRepository.js";
@@ -151,6 +153,8 @@ export interface AppContainer {
   chatTokenService: ChatTokenService | null;
   documentsService: DocumentsService;
   locationService: LocationService;
+  routerWifiService: RouterWifiService;
+  routerWifiJobs: RouterWifiRepository;
   /** Le-somente: espelha pro admin os chamados abertos via Central (log de atividade OPEN_TICKET), enriquecidos ao vivo com o SGP -- ver server/src/support/adminTicketService.ts. */
   adminTicketService: AdminTicketService;
   /** Promessa de pagamento / liberacao por confianca -- SEMPRE chama o SGP de verdade, nunca simulado. Ver server/src/billing/paymentPromiseService.ts. */
@@ -312,6 +316,7 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
   let pushDevices: PushDeviceRepository;
   let ticketRatings: TicketRatingRepository;
   let locationRequests: LocationRequestRepository;
+  let routerWifiJobs: RouterWifiRepository;
   let appCrashes: AppCrashRepository;
   let adminUsers: AdminUserRepository;
   let adminSessions: AdminSessionRepository;
@@ -351,6 +356,7 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     pushDevices = new MysqlPushDeviceRepository(pool);
     ticketRatings = new MysqlTicketRatingRepository(pool);
     locationRequests = new MysqlLocationRequestRepository(pool);
+    routerWifiJobs = new MysqlRouterWifiRepository(pool);
     appCrashes = new MysqlAppCrashRepository(pool);
     adminUsers = new MysqlAdminUserRepository(pool);
     adminSessions = new MysqlAdminSessionRepository(pool);
@@ -387,6 +393,7 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     pushDevices = new SqlitePushDeviceRepository(db);
     ticketRatings = new SqliteTicketRatingRepository(db);
     locationRequests = new SqliteLocationRequestRepository(db);
+    routerWifiJobs = new SqliteRouterWifiRepository(db);
     appCrashes = new SqliteAppCrashRepository(db);
     adminUsers = new SqliteAdminUserRepository(db);
     adminSessions = new SqliteAdminSessionRepository(db);
@@ -455,6 +462,8 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
   const documentsService = new DocumentsService(store, sgpClient, config.sgp.chamado);
   const locationService = new LocationService(locationRequests, store, sgpClient, providers.tickets, (customerId) => supportService.listTickets(customerId));
 
+  const routerWifiService = new RouterWifiService(config.routerWifi, routerWifiJobs, authProfiles, persistentLimiter, store, sgpClient);
+
   const adminTicketService = new AdminTicketService(centralActivityRepository, providers.tickets, providers.contracts, ticketRatings);
 
   const adminAuthService = new AdminAuthService(config, adminUsers, adminSessions, adminLoginAttempts, rateLimiter);
@@ -479,6 +488,8 @@ export function createContainer(configOverrides: AppConfigOverrides = {}): AppCo
     supportService,
     documentsService,
     locationService,
+    routerWifiService,
+    routerWifiJobs,
     adminTicketService,
     paymentPromiseService,
     providers,

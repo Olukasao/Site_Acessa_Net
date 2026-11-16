@@ -43,6 +43,7 @@ import { registerMarketingFeedRoutes } from "./routes/marketingFeedRoutes.js";
 import { registerChamadosFeedRoutes } from "./routes/chamadosFeedRoutes.js";
 import { registerAdminSellerRoutes } from "./routes/adminSellerRoutes.js";
 import { registerWifiRoutes } from "./wifi/wifiRoutes.js";
+import { registerRouterWifiRoutes } from "./routerWifi/routerWifiRoutes.js";
 import { roleCanReachAdminPath } from "./auth/adminPermissions.js";
 import { AppError } from "./errors.js";
 
@@ -330,6 +331,9 @@ export async function buildApp(container: AppContainer = createContainer()) {
       "GET /api/integracoes/marketing/chamados/:protocol",
       /** Aviso no celular do cliente quando o atendente abre/responde o chat (token proprio CHAT_PUSH_TOKEN, ver chatPushRoutes.ts). */
       "POST /api/integracoes/atendimento/push",
+      /** Agente interno de roteadores (token proprio ROUTER_AGENT_TOKEN, ver routerWifi/routerWifiRoutes.ts). */
+      "POST /api/internal/router-agent/claim",
+      "POST /api/internal/router-agent/jobs/:jobId",
       /**
        * Rota de teste da integracao OLT Cloud -- nao usa sessao de cliente,
        * tem sua propria protecao (x-debug-token + so registrada fora de
@@ -403,6 +407,7 @@ export async function buildApp(container: AppContainer = createContainer()) {
   await registerChamadosFeedRoutes(app, container);
   await registerAdminSellerRoutes(app, container);
   await registerWifiRoutes(app, container);
+  await registerRouterWifiRoutes(app, container);
 
   return app;
 }

@@ -218,6 +218,11 @@ function resolveDemoRequest(method, fullPath, body) {
     throw new ClienteApiError(409, "DEMO_MODE", "Alteração de senha não está disponível no modo demonstração.");
   }
 
+  if (path.startsWith("/api/customer/wifi/")) {
+    if (method === "GET" && path === "/api/customer/wifi/status") return { available: false, job: null };
+    throw new ClienteApiError(409, "DEMO_MODE", "Alteração do Wi-Fi não está disponível no modo demonstração.");
+  }
+
   if (path.startsWith("/api/central/network-status")) {
     return { affected: false, status: "unknown" };
   }
@@ -928,6 +933,20 @@ export function maskCpf(value) {
 export async function getNetworkStatus(contractId) {
   const query = contractId ? `?contractId=${encodeURIComponent(contractId)}` : "";
   return clienteRequest(`/api/central/network-status${query}`);
+}
+
+/** Gerenciar meu Wi-Fi: leitura do roteador do contrato (cria uma tarefa no servidor se nao houver leitura recente). */
+export async function getWifiStatus(contractId, signal) {
+  return clienteRequest(`/api/customer/wifi/status?contractId=${encodeURIComponent(contractId)}`, { signal });
+}
+
+/** Pede a troca da senha do Wi-Fi. So contrato, redes e senhas: o servidor descobre o roteador sozinho. */
+export async function changeWifiPassword({ contractId, newPassword, bands, currentPassword }) {
+  return clienteRequest("/api/customer/wifi/password", { method: "POST", body: { contractId, newPassword, bands, currentPassword } });
+}
+
+export async function getWifiJob(jobId, signal) {
+  return clienteRequest(`/api/customer/wifi/jobs/${encodeURIComponent(jobId)}`, { signal });
 }
 
 export async function listActiveNotices(contractId, signal) {

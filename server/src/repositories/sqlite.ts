@@ -160,6 +160,25 @@ function migrate(db: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS idx_location_requests_status ON location_requests (status, created_at);
     CREATE INDEX IF NOT EXISTS idx_location_requests_customer ON location_requests (customer_id, contract_id, protocol);
 
+    CREATE TABLE IF NOT EXISTS router_wifi_jobs (
+      id TEXT PRIMARY KEY,
+      customer_id TEXT NOT NULL,
+      contract_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      bands TEXT NOT NULL,
+      secret_enc TEXT,
+      state TEXT NOT NULL,
+      result_json TEXT,
+      error_code TEXT,
+      agent_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      claimed_at TEXT,
+      finished_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_router_wifi_jobs_state ON router_wifi_jobs (state, created_at);
+    CREATE INDEX IF NOT EXISTS idx_router_wifi_jobs_contract ON router_wifi_jobs (contract_id, kind, created_at);
+
     CREATE TABLE IF NOT EXISTS app_crashes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       signature TEXT NOT NULL,

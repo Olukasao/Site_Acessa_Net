@@ -1,0 +1,13 @@
+{
+  "name": "acessanet-router-agent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Agente interno do 'Gerenciar meu Wi-Fi': busca tarefas na Central, descobre o roteador pelo SGP e (quando o modelo estiver validado) altera o Wi-Fi. Roda DENTRO da rede da AcessaNet.",
+  "scripts": {
+    "start": "node --env-file=.env src/main.mjs",
+    "keygen": "node scripts/keygen.mjs",
+    "set-credential": "node --env-file=.env scripts/set-credential.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}
