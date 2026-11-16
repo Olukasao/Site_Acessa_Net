@@ -157,7 +157,11 @@ export class RouterManager {
           model = (await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins }) })).model;
           sondado = true;
         } catch (error) {
-          if (error?.code === "ROUTER_CERT_UNKNOWN") return { outcome: "requires_validation", vendor, conn, adapter };
+          if (error?.code === "ROUTER_CERT_UNKNOWN") {
+            // certificado novo: nao entra no roteador, mas descobre o modelo pela pagina de login
+            const achado = await this.identifyAnyCert(adapter, baseUrl);
+            return { outcome: "requires_validation", vendor, model: achado?.model ?? null, conn, adapter };
+          }
           throw error;
         }
       }
@@ -168,6 +172,15 @@ export class RouterManager {
     }));
   }
 
+  /**
+   * Reconhece fabricante e modelo SEM depender do certificado fixado: so um GET na pagina de login (publica), sem senha. Serve para
+   * identificar qualquer versao/modelo; quem decide se pode ALTERAR continua sendo o modelo validado + o certificado fixado.
+   */
+  async identifyAnyCert(adapter, baseUrl) {
+    const http = routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, anyCert: true });
+    return adapter.identify({ baseUrl, http }).catch(() => null);
+  }
+
   /** Reconhece o fabricante pelo certificado (pin) e pela pagina de login. Nunca tenta senha. */
   async detectVendor(ip) {
     for (const adapter of allAdapters()) {
@@ -176,11 +189,8 @@ export class RouterManager {
       if (adapter.support !== "supported" || (ep?.protocol !== "http" && !ep?.pins?.length)) continue;
       const baseUrl = routerBaseUrl(ip, adapter.vendor, this.d.endpoints, this.d.cidrs);
       if (!baseUrl) continue;
-      if (ep.protocol !== "http") {
-        const pin = await checkPin(baseUrl, ep.pins, this.d.routerTimeoutMs);
-        if (!pin.ok) continue;
-      }
-      const id = await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins: ep.pins }) }).catch(() => null);
+      // certificado fora da lista (modelo/versao nova): ainda reconhece pela pagina de login, sem senha
+      const id = await this.identifyAnyCert(adapter, baseUrl);
       if (id?.vendor === adapter.vendor) return { vendor: adapter.vendor, model: id.model ?? null };
     }
     return null;
@@ -208,8 +218,8 @@ export class RouterManager {
       const adapter = adapterFor(vendor);
       const baseUrl = routerBaseUrl(conn.ip, vendor, this.d.endpoints, this.d.cidrs);
       const pins = this.d.endpoints[vendor]?.pins ?? [];
-      if (adapter?.support === "supported" && baseUrl && (pins.length || this.d.endpoints[vendor]?.protocol === "http")) {
-        const id = await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins }) }).catch(() => null);
+      if (adapter?.support === "supported" && baseUrl) {
+        const id = await this.identifyAnyCert(adapter, baseUrl);
         if (id?.model) return entry(adapter.supportsModel?.(id.model) === false ? "requires_validation" : "available", { vendor, model: id.model });
       }
       return entry(baseUrl ? "requires_validation" : "requires_validation", { vendor });

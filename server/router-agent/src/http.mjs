@@ -54,13 +54,17 @@ export function checkPin(baseUrl, pins, timeoutMs = 8000) {
   });
 }
 
-export function routerHttp(baseUrl, { timeoutMs = 8000, maxRequests = 40, pins = [], transport } = {}) {
+/**
+ * `anyCert`: SO para RECONHECER o aparelho (um GET na pagina de login publica, sem enviar senha nem cookie): aceita certificado fora da
+ * lista de pins. Nunca usado em login nem em alteracao.
+ */
+export function routerHttp(baseUrl, { timeoutMs = 8000, maxRequests = 40, pins = [], transport, anyCert = false } = {}) {
   let count = 0;
   const cookies = new Map();
   const isHttps = baseUrl.startsWith("https:");
   const agent = isHttps ? pinnedAgent() : undefined;
   const allowed = new Set((pins ?? []).map((p) => String(p).replace(/:/g, "").toLowerCase()));
-  let pinned = !isHttps || Boolean(transport);
+  let pinned = !isHttps || Boolean(transport) || anyCert;
   const ensurePinned = async () => {
     if (pinned) return;
     const r = await checkPin(baseUrl, pins, timeoutMs);
@@ -87,7 +91,7 @@ export function routerHttp(baseUrl, { timeoutMs = 8000, maxRequests = 40, pins =
         );
         // segunda conferencia, na propria conexao: certificado diferente derruba antes da resposta ser usada
         req.on("socket", (sock) => sock.once("secureConnect", () => {
-          if (!allowed.has(fingerprintOf(sock.getPeerCertificate()))) sock.destroy(Object.assign(new Error("certificado do roteador fora da lista"), { code: "ROUTER_CERT_UNKNOWN" }));
+          if (!anyCert && !allowed.has(fingerprintOf(sock.getPeerCertificate()))) sock.destroy(Object.assign(new Error("certificado do roteador fora da lista"), { code: "ROUTER_CERT_UNKNOWN" }));
         }));
         req.on("error", reject);
         req.on("timeout", () => req.destroy(Object.assign(new Error("timeout"), { code: "ROUTER_UNREACHABLE" })));
