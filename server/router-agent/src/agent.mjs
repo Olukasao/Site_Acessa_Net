@@ -4,6 +4,7 @@ import { CredentialStore } from "./credentials.mjs";
 import { Limiter, RouterManager } from "./manager.mjs";
 import { parseCidr } from "./policy.mjs";
 import { SgpClient } from "./sgp.mjs";
+import { newTimings, summarizeTimings, timed, timingsStore } from "./timing.mjs";
 
 /** Le e valida a configuracao (variaveis de ambiente). Falta algo essencial = nao sobe. */
 export function loadConfig(env = process.env) {
@@ -36,9 +37,13 @@ export function loadConfig(env = process.env) {
     // Seguranca: sem ROUTER_AGENT_DRY_RUN=0 o agente so le o SGP e nunca entra num roteador.
     dryRun: env.ROUTER_AGENT_DRY_RUN !== "0",
     pollMs: Math.max(1000, Number(env.ROUTER_AGENT_POLL_MS || 3000)),
+    // espera longa na Central (ms): o pedido chega na hora. 0 = volta ao ciclo curto de pollMs
+    longPollMs: Math.min(20_000, Math.max(0, Number(env.ROUTER_AGENT_LONG_POLL_MS ?? 12_000))),
     concurrency: Math.max(1, Math.min(20, Number(env.ROUTER_AGENT_CONCURRENCY || 4))),
     perVendorConcurrency: Math.max(1, Math.min(10, Number(env.ROUTER_AGENT_PER_VENDOR || 2))),
-    routerTimeoutMs: Number(env.ROUTER_TIMEOUT_MS || 8000)
+    routerTimeoutMs: Number(env.ROUTER_TIMEOUT_MS || 8000),
+    // 1 = a leitura (tela de abrir o Wi-Fi) entra no painel do roteador para ler os nomes das redes (~10 s a mais)
+    statusReadsSsid: env.ROUTER_STATUS_READ_SSID === "1"
   };
 }
 
@@ -64,17 +69,18 @@ export class Agent {
         dryRun: cfg.dryRun,
         perVendor,
         routerTimeoutMs: cfg.routerTimeoutMs,
+        statusReadsSsid: cfg.statusReadsSsid,
         log,
         decrypt: (secretEnc) => privateDecrypt({ key: privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, Buffer.from(String(secretEnc), "base64"))
       });
   }
 
-  async central(path, body) {
+  async central(path, body, timeoutMs = 15000) {
     const res = await this.fetch(`${this.cfg.centralUrl}${path}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.cfg.token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(timeoutMs)
     });
     if (!res.ok) throw Object.assign(new Error(`Central respondeu ${res.status} em ${path}`), { status: res.status });
     return res.json();
@@ -85,7 +91,18 @@ export class Agent {
     const free = this.cfg.concurrency - this.running;
     if (free <= 0) return 0;
     // cada busca de tarefas e tambem o sinal de vida (a Central mostra "indisponivel agora" se ele sumir)
-    const { jobs } = await this.central("/api/internal/router-agent/claim", { agentId: this.cfg.agentId, max: Math.min(free, 10), dryRun: this.cfg.dryRun, version: AGENT_VERSION });
+    let resposta;
+    try {
+      resposta = await this.claim(free);
+    } catch (error) {
+      // Central antiga, que ainda nao conhece a espera longa (400): volta ao ciclo curto e segue funcionando
+      if (error?.status === 400 && this.cfg.longPollMs > 0) {
+        this.log.warn?.("[router-agent] a Central ainda nao aceita espera longa: usando o ciclo curto");
+        this.cfg.longPollMs = 0;
+        resposta = await this.claim(free);
+      } else throw error;
+    }
+    const { jobs } = resposta;
     for (const job of jobs) {
       this.running++;
       this.process(job).finally(() => this.running--);
@@ -93,12 +110,16 @@ export class Agent {
     return jobs.length;
   }
 
+  claim(free) {
+    return this.central("/api/internal/router-agent/claim", { agentId: this.cfg.agentId, max: Math.min(free, 10), dryRun: this.cfg.dryRun, version: AGENT_VERSION, waitMs: this.cfg.longPollMs }, this.cfg.longPollMs + 15000);
+  }
+
   async process(job) {
     const started = Date.now();
     const FINAIS = ["completed", "failed", "unsupported", "unconfirmed"];
     const report = async (state, extra = {}) => {
       try {
-        await this.central(`/api/internal/router-agent/jobs/${job.id}`, { agentId: this.cfg.agentId, state, ...extra });
+        await timed("central.relatorios", () => this.central(`/api/internal/router-agent/jobs/${job.id}`, { agentId: this.cfg.agentId, state, ...extra }));
       } catch (error) {
         // 409 num andamento = a Central ja encerrou este pedido (expirou, por exemplo): nao mexe mais no roteador
         if (error?.status === 409 && !FINAIS.includes(state)) throw Object.assign(new Error("pedido ja encerrado pela Central"), { code: "JOB_ABORTED" });
@@ -109,29 +130,41 @@ export class Agent {
         this.log.info?.(`[router-agent] ${job.kind} ${job.id} -> ${state}${extra.errorCode ? ` (${extra.errorCode})` : ""} em ${Date.now() - started} ms`);
       }
     };
-    try {
-      if (job.kind === "status") await this.manager.status(job, report);
-      else if (job.kind === "change_password") await this.manager.changePassword(job, report);
-      else await report("failed", { errorCode: "INTERNAL" });
-    } catch (error) {
-      if (error?.code === "JOB_ABORTED") {
-        this.log.warn?.(`[router-agent] ${job.kind} ${job.id}: ${error.message}; roteador nao foi tocado`);
-        return;
+    const store = newTimings();
+    await timingsStore.run(store, async () => {
+      try {
+        if (job.kind === "status") await this.manager.status(job, report);
+        else if (job.kind === "change_password") await this.manager.changePassword(job, report);
+        else await report("failed", { errorCode: "INTERNAL" });
+      } catch (error) {
+        if (error?.code === "JOB_ABORTED") {
+          this.log.warn?.(`[router-agent] ${job.kind} ${job.id}: ${error.message}; roteador nao foi tocado`);
+          return;
+        }
+        this.log.error?.(`[router-agent] ${job.id}: ${error?.message ?? error}`);
+        await report(job.kind === "change_password" ? "unconfirmed" : "failed", { errorCode: "INTERNAL" });
+      } finally {
+        this.onTimings?.(job, summarizeTimings(store));
+        this.log.info?.(`[router-agent] tempos ${job.kind} ${job.id.slice(0, 8)}: ${JSON.stringify(summarizeTimings(store))}`);
       }
-      this.log.error?.(`[router-agent] ${job.id}: ${error?.message ?? error}`);
-      await report(job.kind === "change_password" ? "unconfirmed" : "failed", { errorCode: "INTERNAL" });
-    }
+    });
   }
 
   async loop() {
     this.log.info?.(`[router-agent] ${this.cfg.agentId} no ar${this.cfg.dryRun ? " (modo seguro: so le o SGP, nao entra em roteador)" : ""}`);
     while (!this.stopped) {
+      let pegou = 0;
+      let erro = false;
       try {
-        await this.tick();
+        pegou = await this.tick();
       } catch (error) {
+        erro = true;
         this.log.warn?.(`[router-agent] ${error.message}`);
       }
-      await new Promise((r) => setTimeout(r, this.cfg.pollMs));
+      // Com espera longa a propria Central segura a resposta: volta a perguntar na hora. Sem vaga livre, so descansa um pouco.
+      const cheio = this.running >= this.cfg.concurrency;
+      const espera = erro ? this.cfg.pollMs : this.cfg.longPollMs > 0 ? (cheio ? 500 : 0) : pegou ? 0 : this.cfg.pollMs;
+      if (espera) await new Promise((r) => setTimeout(r, espera));
     }
   }
 }

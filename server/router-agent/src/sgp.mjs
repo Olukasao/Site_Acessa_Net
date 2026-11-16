@@ -1,4 +1,5 @@
 import { parseConnectionStatus, parseEquipmentType } from "./parse.mjs";
+import { timed } from "./timing.mjs";
 
 /**
  * SGP, so leitura:
@@ -7,6 +8,8 @@ import { parseConnectionStatus, parseEquipmentType } from "./parse.mjs";
  * O numero do servico vem SEMPRE da API oficial para o contrato pedido (nunca de busca por texto no painel),
  * para nao pegar o roteador de outro cliente.
  */
+const EQUIPMENT_TTL_MS = 6 * 60 * 60_000;
+
 export class SgpClient {
   constructor(cfg, fetchImpl = fetch) {
     this.cfg = cfg;
@@ -17,6 +20,10 @@ export class SgpClient {
   }
 
   async verificaAcesso(contractId) {
+    return timed("sgp.verificaacesso", () => this.#verificaAcesso(contractId));
+  }
+
+  async #verificaAcesso(contractId) {
     const body = new FormData();
     body.append("contrato", String(contractId));
     const res = await this.fetch(`${this.cfg.uraBaseUrl}/api/ura/verificaacesso/`, {
@@ -33,11 +40,24 @@ export class SgpClient {
   }
 
   async connectionStatus(serviceId) {
-    return parseConnectionStatus(await this.webGet(`/admin/servicos/internet/${serviceId}/infodetail/?statusonly=1`));
+    return timed("sgp.sessao_pppoe", async () => parseConnectionStatus(await this.webGet(`/admin/servicos/internet/${serviceId}/infodetail/?statusonly=1`)));
   }
 
+  /**
+   * "Tipo equipamento" so muda quando alguem edita o cadastro no SGP, e a pagina e pesada (~2 s): fica em memoria por algumas horas.
+   * A sessao PPPoE (IP/MAC) NUNCA e guardada: sempre vem fresca, porque e ela que prova qual aparelho esta com o contrato agora.
+   */
   async equipmentType(serviceId) {
-    return parseEquipmentType(await this.webGet(`/admin/servicos/internet/${serviceId}/`));
+    const hit = this.equipmentCache?.get(serviceId);
+    if (hit && Date.now() - hit.at < EQUIPMENT_TTL_MS) return hit.value;
+    const value = await this.#equipmentType(serviceId);
+    // so guarda leitura valida (pagina lida e fabricante ou "sem tipo" de verdade), nunca erro
+    if (value.found) (this.equipmentCache ??= new Map()).set(serviceId, { at: Date.now(), value });
+    return value;
+  }
+
+  async #equipmentType(serviceId) {
+    return timed("sgp.tipo_equipamento", async () => parseEquipmentType(await this.webGet(`/admin/servicos/internet/${serviceId}/`)));
   }
 
   // ---------- sessao do painel ----------
@@ -80,7 +100,7 @@ export class SgpClient {
   async ensureSession() {
     if (this.cookies.has("sessionid") && Date.now() < this.sessionUntil) return;
     this.loggingIn ??= this.login().finally(() => (this.loggingIn = null));
-    await this.loggingIn;
+    await timed("sgp.login_painel", () => this.loggingIn);
   }
   async webGet(path, retry = true) {
     await this.ensureSession();

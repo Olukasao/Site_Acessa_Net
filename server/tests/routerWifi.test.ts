@@ -441,6 +441,30 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
     await ctx.app.close();
   });
 
+  it("espera longa: sem tarefa a resposta demora até waitMs; com tarefa nova responde na hora", async () => {
+    const ctx = await setup();
+    const claim = (body: Record<string, unknown>) => ctx.app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1", ...body }, remoteAddress: freshIp() });
+    // sem tarefa: espera o prazo e volta vazio
+    const t0 = Date.now();
+    const vazio = await claim({ waitMs: 700 });
+    expect(vazio.json().jobs).toEqual([]);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(600);
+    // tarefa que chega durante a espera: o agente recebe sem esperar o prazo todo
+    const espera = claim({ waitMs: 8000 });
+    await new Promise((r) => setTimeout(r, 400));
+    const criado = Date.now();
+    await ctx.container.routerWifiJobs.create({ customerId: "customer_A", contractId: "1001", kind: "status", bands: [], secretEnc: null });
+    const res = await espera;
+    expect(res.json().jobs).toHaveLength(1);
+    expect(Date.now() - criado).toBeLessThan(1500);
+    // limite do prazo e campo desconhecido
+    expect((await claim({ waitMs: 60_000 })).statusCode).toBe(400);
+    expect((await claim({ waitMs: -1 })).statusCode).toBe(400);
+    // o sinal de vida vale desde o inicio da espera
+    expect(await ctx.container.routerWifiService.agentOnline()).toBe(true);
+    await ctx.app.close();
+  });
+
   it("sem token de agente as rotas do agente não existem", async () => {
     const { app } = await setup({ agentToken: undefined });
     expect((await app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1" }, remoteAddress: freshIp() })).statusCode).toBe(404);

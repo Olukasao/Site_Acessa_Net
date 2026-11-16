@@ -1,7 +1,9 @@
 import { adapterFor, allAdapters } from "./adapters/registry.mjs";
 import { checkPin, peekCertificate, routerHttp } from "./http.mjs";
+import { timed, timingsStore } from "./timing.mjs";
 import { ipAllowed, routerBaseUrl } from "./policy.mjs";
 
+const PROBE_TTL_MS = 10 * 60_000;
 const VENDOR_LABEL = { tplink: "TP-Link", huawei: "Huawei", stavix: "Stavix", mercusys: "Mercusys" };
 const KNOWN_CODES = new Set(["ROUTER_OFFLINE", "ROUTER_UNSUPPORTED", "ROUTER_REQUIRES_VALIDATION", "ROUTER_UNREACHABLE", "ROUTER_AUTH_FAILED", "ROUTER_NOT_IDENTIFIED", "SGP_UNAVAILABLE", "CONTRACT_NOT_FOUND", "VERIFY_FAILED", "INTERNAL"]);
 const codeOf = (error) => (KNOWN_CODES.has(error?.code) ? error.code : "INTERNAL");
@@ -58,6 +60,8 @@ export class Limiter {
 export class RouterManager {
   constructor(deps) {
     this.d = deps;
+    this.probeCache = new Map(); // ip|mac -> { vendor, model, at }
+    this.ssidCache = new Map(); // contrato -> { '2.4GHz': nome, '5GHz': nome } (so nomes das redes, aprendidos na ultima leitura/troca)
   }
 
   /**
@@ -68,8 +72,16 @@ export class RouterManager {
     this.perRouter ??= new Map();
     if (!this.perRouter.has(ip)) this.perRouter.set(ip, new Limiter(1));
     const lock = this.perRouter.get(ip);
+    const pediu = performance.now();
     try {
-      return await lock.run(fn, { waitMs: 120_000 });
+      return await lock.run(
+        async () => {
+          const store = timingsStore.getStore();
+          if (store) store.steps.set("router.espera_vez", (store.steps.get("router.espera_vez") ?? 0) + (performance.now() - pediu));
+          return fn();
+        },
+        { waitMs: 120_000 }
+      );
     } finally {
       if (lock.running === 0 && lock.queue.length === 0) this.perRouter.delete(ip);
     }
@@ -80,18 +92,33 @@ export class RouterManager {
     const access = await this.d.sgp.verificaAcesso(contractId);
     if (!access || !access.serviceId) return { outcome: "not_found" };
     if (!access.online) return { outcome: "offline" };
-    const conn = await this.d.sgp.connectionStatus(access.serviceId);
+    // sessao PPPoE (sempre fresca) e tipo de equipamento (em cache) ao mesmo tempo
+    const [conn, eq] = await Promise.all([this.d.sgp.connectionStatus(access.serviceId), this.d.sgp.equipmentType(access.serviceId)]);
     if (!conn) throw Object.assign(new Error("status do SGP ilegivel"), { code: "SGP_UNAVAILABLE" });
     if (!conn.online) return { outcome: "offline" };
     if (!conn.ip) throw Object.assign(new Error("IP da sessao ilegivel"), { code: "SGP_UNAVAILABLE" });
-    const eq = await this.d.sgp.equipmentType(access.serviceId);
     if (eq.vendor === "customer_owned") return { outcome: "unsupported", vendor: eq.vendor, conn };
     // IP fora da faixa liberada: nao conectamos em nada
     if (!ipAllowed(conn.ip, this.d.cidrs)) return { outcome: "unreachable", vendor: eq.vendor, conn };
     // Tudo daqui em diante pode tocar no roteador (certificado e pagina de login): um acesso por vez
-    return this.underRouterLock(conn.ip, async () => {
-      // Sem "Tipo equipamento" no SGP: tenta reconhecer pelo proprio roteador (so certificado conhecido + pagina de login, sem login)
-      const vendor = eq.vendor ?? (await this.detectVendor(conn.ip));
+    return this.underRouterLock(conn.ip, () => timed("router.sondagem", async () => {
+      // O que ja se sabe deste APARELHO (IP + MAC da sessao atual): evita consultar de novo o certificado e a pagina de login.
+      // A chave inclui o MAC, entao um IP reaproveitado por outro cliente nunca herda o modelo do aparelho anterior.
+      const chave = conn.mac ? `${conn.ip}|${conn.mac}` : null;
+      const conhecido = chave ? this.probeCache.get(chave) : null;
+      let vendor = eq.vendor;
+      let model = null;
+      let sondado = false;
+      if (conhecido && Date.now() - conhecido.at < PROBE_TTL_MS && (!vendor || vendor === conhecido.vendor)) {
+        vendor = vendor ?? conhecido.vendor;
+        model = conhecido.model;
+      } else if (!vendor) {
+        // Sem "Tipo equipamento" no SGP: reconhece pelo proprio roteador (certificado conhecido + pagina de login, sem login)
+        const achado = await this.detectVendor(conn.ip);
+        vendor = achado?.vendor ?? null;
+        model = achado?.model ?? null;
+        sondado = true;
+      }
       if (!vendor) return { outcome: "not_identified", conn };
       const adapter = adapterFor(vendor);
       if (!adapter) return { outcome: "unsupported", vendor, conn };
@@ -99,19 +126,20 @@ export class RouterManager {
       // fabricante sem porta/protocolo configurado: ainda em validacao
       if (!baseUrl) return { outcome: "requires_validation", vendor, conn, adapter };
       const pins = this.d.endpoints[vendor]?.pins ?? [];
-      let model = null;
-      if (adapter.support === "supported") {
+      if (adapter.support === "supported" && !model) {
         try {
           model = (await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins }) })).model;
+          sondado = true;
         } catch (error) {
           if (error?.code === "ROUTER_CERT_UNKNOWN") return { outcome: "requires_validation", vendor, conn, adapter };
           throw error;
         }
-        // so o modelo validado em bancada e alterado; os outros do mesmo fabricante ficam "em validacao"
-        if (typeof adapter.supportsModel === "function" && !adapter.supportsModel(model)) return { outcome: "requires_validation", vendor, model, conn, adapter };
       }
+      if (sondado && chave && model) this.probeCache.set(chave, { vendor, model, at: Date.now() });
+      // so o modelo validado em bancada e alterado; os outros do mesmo fabricante ficam "em validacao"
+      if (adapter.support === "supported" && typeof adapter.supportsModel === "function" && !adapter.supportsModel(model)) return { outcome: "requires_validation", vendor, model, conn, adapter };
       return { outcome: "ok", vendor, model, conn, adapter, baseUrl, pins };
-    });
+    }));
   }
 
   /** Reconhece o fabricante pelo certificado (pin) e pela pagina de login. Nunca tenta senha. */
@@ -124,7 +152,7 @@ export class RouterManager {
       const pin = await checkPin(baseUrl, ep.pins, this.d.routerTimeoutMs);
       if (!pin.ok) continue;
       const id = await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins: ep.pins }) }).catch(() => null);
-      if (id?.vendor === adapter.vendor) return adapter.vendor;
+      if (id?.vendor === adapter.vendor) return { vendor: adapter.vendor, model: id.model ?? null };
     }
     return null;
   }
@@ -146,7 +174,7 @@ export class RouterManager {
     if (!ipAllowed(conn.ip, this.d.cidrs)) return entry("unreachable", { vendor: eq.vendor });
     return this.underRouterLock(conn.ip, async () => {
     const detected = await this.detectVendor(conn.ip);
-    const vendor = eq.vendor ?? detected;
+    const vendor = eq.vendor ?? detected?.vendor ?? null;
     if (vendor) {
       const adapter = adapterFor(vendor);
       const baseUrl = routerBaseUrl(conn.ip, vendor, this.d.endpoints, this.d.cidrs);
@@ -169,7 +197,7 @@ export class RouterManager {
   }
 
   async status(job, report) {
-    await report("connecting");
+    // (a Central ja marcou o pedido como "conectando" ao entregar a tarefa: nao precisa repetir)
     let r;
     try {
       r = await this.resolve(job.contractId);
@@ -186,14 +214,31 @@ export class RouterManager {
     if (r.outcome === "requires_validation" || r.adapter.support !== "supported" || this.d.dryRun) {
       return report("completed", { result: this.statusResult({ online: true, vendor: label, management: "requires_validation" }) });
     }
+    // Leitura rapida (sem login no painel): modelo e redes vem do que ja foi validado para o modelo; os nomes das redes, do que ja
+    // aprendemos neste contrato. Com ROUTER_STATUS_READ_SSID=1 volta a ler os nomes no proprio roteador (leva ~10 s a mais).
+    const rapido = !this.d.statusReadsSsid && typeof r.adapter.quickStatus === "function" ? r.adapter.quickStatus(r.model) : null;
+    if (rapido) {
+      return report("completed", {
+        result: this.statusResult({
+          online: true,
+          vendor: label,
+          model: r.model ?? null,
+          management: "available",
+          bands: rapido.bands,
+          ssids: this.ssidCache.get(job.contractId) ?? {},
+          canChangePassword: true
+        })
+      });
+    }
     return this.withRouter(r, async (ctx, session) => {
       const info = await r.adapter.getWifiInfo(ctx, session);
+      if (info.ssids && Object.keys(info.ssids).length) this.ssidCache.set(job.contractId, info.ssids);
       if (!info.bands?.length) {
         // nao leu nenhuma rede: nunca diz "troca disponivel" sem saber quais redes existem
         this.d.log?.warn?.(`[router-agent] ${r.vendor}: nenhuma rede lida (${(info.errors ?? []).join("; ") || "sem detalhe"})`);
         return report("failed", { errorCode: "ROUTER_UNREACHABLE" });
       }
-      const id = await r.adapter.identify(ctx);
+      const id = r.model ? { model: r.model, firmware: null } : await r.adapter.identify(ctx);
       return report("completed", {
         result: this.statusResult({
           online: true,
@@ -210,7 +255,6 @@ export class RouterManager {
   }
 
   async changePassword(job, report) {
-    await report("connecting");
     let r;
     try {
       r = await this.resolve(job.contractId);
@@ -236,6 +280,7 @@ export class RouterManager {
         try {
           await r.adapter.changeWifiPassword(ctx, session, { password: secret.toString("utf8"), bands: job.bands });
           applied = true;
+          if (session?.ssids && Object.keys(session.ssids).length) this.ssidCache.set(job.contractId, { ...(this.ssidCache.get(job.contractId) ?? {}), ...session.ssids });
           await report("verifying");
           const verified = await r.adapter.verifyWifiConfiguration(ctx, session, { password: secret.toString("utf8"), bands: job.bands });
           // accepted: o roteador aceitou e a rede continua igual (nao e prova de que a senha mudou; a Central mostra "nao confirmado")

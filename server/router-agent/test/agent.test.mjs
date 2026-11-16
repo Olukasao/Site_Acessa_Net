@@ -164,7 +164,7 @@ test("modelo validado: autentica, troca, verifica e sempre fecha a sessão", asy
   registerAdapter(adapter);
   const { states, report } = recorder();
   await managerWith({ sgp: fakeVendor }).changePassword({ contractId: "1001", kind: "change_password", bands: ["2.4GHz", "5GHz"], secretEnc: "x" }, report);
-  assert.deepEqual(states.map((s) => s.state), ["connecting", "authenticating", "updating", "verifying", "completed"]);
+  assert.deepEqual(states.map((s) => s.state), ["authenticating", "updating", "verifying", "completed"]); // "connecting" a Central ja marca ao entregar a tarefa
   assert.deepEqual(states.at(-1).result, { bands: ["2.4GHz", "5GHz"], verified: true, accepted: true, vendor: null, model: null });
   assert.deepEqual(adapter.changed, { password: "Casa-Nova#2026", bands: ["2.4GHz", "5GHz"] });
   assert.equal(adapter.closed, 1);

@@ -46,7 +46,7 @@ function useJobPolling(initialJob, onDone) {
         /* tenta de novo na proxima volta */
         setJob((current) => ({ ...current }));
       }
-    }, 2500);
+    }, 1000);
     return () => {
       clearTimeout(timer);
       controller.abort();

@@ -405,11 +405,18 @@ export class RouterWifiService {
 
   // ---------- agente interno ----------
 
-  async claim(agentId: string, max: number, info: { dryRun?: boolean | undefined; version?: string | undefined } = {}) {
+  async claim(agentId: string, max: number, info: { dryRun?: boolean | undefined; version?: string | undefined; waitMs?: number | undefined } = {}) {
     // cada busca de tarefas e o sinal de vida do agente
     await this.repo.touchAgent(agentId, info.dryRun ?? true, info.version ?? null, new Date());
     await this.expire();
-    const jobs = await this.repo.claim(agentId, Math.min(Math.max(1, max), 10), new Date());
+    const limit = Math.min(Math.max(1, max), 10);
+    let jobs = await this.repo.claim(agentId, limit, new Date());
+    // Espera longa: se nao ha tarefa, segura a resposta ate chegar uma (ate waitMs). O agente e avisado na hora, sem esperar o proximo ciclo.
+    const deadline = Date.now() + Math.min(Math.max(0, info.waitMs ?? 0), 20_000);
+    while (!jobs.length && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      jobs = await this.repo.claim(agentId, limit, new Date());
+    }
     // O agente recebe so o contrato e o segredo cifrado; nada de cliente/CPF.
     return jobs.map((job) => ({ id: job.id, contractId: job.contractId, kind: job.kind, bands: job.bands, secretEnc: job.secretEnc }));
   }

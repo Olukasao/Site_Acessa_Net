@@ -21,7 +21,9 @@ const claimBody = z
     max: z.number().int().min(1).max(10).default(3),
     // sinal de vida do agente: modo seguro ligado e versao
     dryRun: z.boolean().optional(),
-    version: z.string().max(32).optional()
+    version: z.string().max(32).optional(),
+    /** Espera longa: segura a resposta ate chegar tarefa (maximo 20 s). */
+    waitMs: z.number().int().min(0).max(20_000).optional()
   })
   .strict();
 const confirmBody = z.object({ connected: z.boolean() }).strict();
@@ -128,7 +130,7 @@ export async function registerRouterWifiRoutes(app: FastifyInstance, container: 
   app.post("/api/internal/router-agent/claim", async (request) => {
     requireAgent(request);
     const body = parseBody(claimBody, request.body ?? {});
-    return { jobs: await service.claim(body.agentId, body.max, { dryRun: body.dryRun, version: body.version }) };
+    return { jobs: await service.claim(body.agentId, body.max, { dryRun: body.dryRun, version: body.version, waitMs: body.waitMs }) };
   });
 
   /** Inventario so-leitura enviado pelo agente (fabricante/modelo por contrato, sem senha). */
