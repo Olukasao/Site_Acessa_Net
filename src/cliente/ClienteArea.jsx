@@ -2272,6 +2272,7 @@ function parsePlanSpeed(planName) {
 function InternetPage({ connection, contract, loading }) {
   return (
     <div className="cliente-page-grid">
+      <WifiManagerCard contract={contract} />
       <section className="cliente-panel cliente-panel-strong">
         <div className="cliente-panel-head">
           <Wifi size={22} />
@@ -2302,7 +2303,6 @@ function InternetPage({ connection, contract, loading }) {
         />
       </section>
 
-      <WifiManagerCard contract={contract} />
     </div>
   );
 }

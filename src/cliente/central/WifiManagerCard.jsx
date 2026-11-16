@@ -273,6 +273,7 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
       ) : null}
 
       {canChange && !busy && !change?.needsConfirmation ? (
+        <div className="wifi-actions">
         <form className="wifi-form" onSubmit={(e) => { e.preventDefault(); if (valid) ask("password"); }}>
           <label htmlFor="wifi-new-password">Nova senha do Wi-Fi</label>
           <PasswordInput id="wifi-new-password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder="Nova senha" />
@@ -284,9 +285,6 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
           <button type="submit" className="home-btn home-btn-primary" disabled={!valid}><KeyRound size={16} /> Alterar senha</button>
           <p className="wifi-note">A senha é trocada nas duas redes (2.4 e 5G). Depois da alteração, seus aparelhos vão precisar da nova senha.</p>
         </form>
-      ) : null}
-
-      {canChange && !busy && !change?.needsConfirmation ? (
         <form className="wifi-form wifi-name-form" onSubmit={(e) => { e.preventDefault(); if (!nameError) ask("name"); }}>
           <label htmlFor="wifi-new-name">Nome do Wi-Fi</label>
           <input id="wifi-new-name" className="wifi-name-input" value={baseName} onChange={(e) => setBaseName(e.target.value)} maxLength={28} autoComplete="off" spellCheck={false} placeholder="Ex.: Casa da Ana" />
@@ -298,6 +296,7 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
           <button type="submit" className="home-btn home-btn-primary" disabled={!!nameError}><Pencil size={16} /> Alterar nome</button>
           <p className="wifi-note">Depois da alteração, seus aparelhos vão precisar escolher a rede com o novo nome.</p>
         </form>
+        </div>
       ) : null}
 
       {history && history.available && (history.items.length > 0 || history.lastPassword) ? (
