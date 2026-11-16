@@ -42,8 +42,9 @@ export class TplinkXx230Adapter extends BaseRouterAdapter {
     this.launch = launch; // so para testes
   }
 
+  /** Qualquer TP-Link reconhecido pela pagina de login: se a tela de Wi-Fi for diferente, a troca falha com seguranca (vira chamado). */
   supportsModel(model) {
-    return VALIDATED_MODELS.includes(String(model ?? ""));
+    return Boolean(model);
   }
   quickStatus(model) {
     const bands = MODEL_BANDS[String(model ?? "")];

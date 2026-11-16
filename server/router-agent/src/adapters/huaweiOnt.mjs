@@ -167,8 +167,12 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
     this.launch = launch; // so para testes
   }
 
+  /** Dono do certificado aceito mesmo fora da lista de pins (mesma interface e senha padrao em toda a linha Huawei). */
+  trustedCertSubject = /huawei/i;
+
+  /** Qualquer ONT da linha Huawei (EG/HG/EN...): a interface e a senha padrao sao as mesmas; so a descricao do modelo muda. */
   supportsModel(model) {
-    return VALIDATED_MODELS.includes(String(model ?? ""));
+    return /^(EG|HG|EN|HS|OT)\d{3,5}/i.test(String(model ?? ""));
   }
 
   /** Leitura sem login: so para modelo validado. null = precisa ler no painel. */
@@ -190,7 +194,8 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
 
   async authenticate(ctx) {
     // confere o certificado antes de abrir o navegador (o contexto do navegador aceita o certificado de fabrica so desta origem)
-    const pin = await timed("router.certificado", () => checkPin(ctx.baseUrl, ctx.http.pins));
+    // certificado fora da lista, mas do fabricante certo, ja foi aceito na descoberta (ctx.http.anyCert)
+    const pin = ctx.http.anyCert ? { ok: true } : await timed("router.certificado", () => checkPin(ctx.baseUrl, ctx.http.pins));
     if (pin.unreachable) throw fail("ROUTER_UNREACHABLE", "roteador nao respondeu");
     if (!pin.ok) throw fail("ROUTER_CERT_UNKNOWN", "certificado do roteador fora da lista");
 

@@ -205,7 +205,9 @@ test("Huawei: nome do produto da página de login e só o modelo validado é alt
   assert.equal(parseProductName("<html></html>"), null);
   const a = new HuaweiOntAdapter({ browserPath: "/nao/usado" });
   assert.equal(a.supportsModel("EG8145V5-V2"), true);
-  assert.equal(a.supportsModel("HG8245H"), false);
+  assert.equal(a.supportsModel("HG8245H"), true); // mesma linha: interface e senha padrao iguais
+  assert.equal(a.supportsModel("EG8145X6-10"), true);
+  assert.equal(a.supportsModel("Archer"), false); // nao e Huawei
   assert.equal(a.supportsModel(null), false);
 });
 
@@ -458,7 +460,8 @@ test("TP-Link XX230v: modelo vem da pagina de login e a rede unica usa so o nome
   assert.equal(singleNetworkName({ "2.4GHz": "Pedro-5g 2.4", "5GHz": "Pedro-5g 5G" }), "Pedro-5g");
   const a = new TplinkXx230Adapter({ browserPath: "/x" });
   assert.equal(a.supportsModel("XX230v"), true);
-  assert.equal(a.supportsModel("Archer C6"), false);
+  assert.equal(a.supportsModel("Archer C6"), true);
+  assert.equal(a.supportsModel(null), false);
   assert.deepEqual(a.quickStatus("XX230v"), { bands: ["2.4GHz", "5GHz"] });
   assert.equal(a.quickStatus("outro"), null);
   const html = '<title>x</title> tp-link <script>modelName="XX230v"</script>';

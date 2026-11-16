@@ -102,6 +102,7 @@ export function routerHttp(baseUrl, { timeoutMs = 8000, maxRequests = 40, pins =
   return {
     baseUrl,
     pins,
+    anyCert,
     async request(path, init = {}) {
       const url = new URL(path, baseUrl).toString();
       if (!sameOrigin(url, baseUrl)) throw Object.assign(new Error("destino fora do roteador"), { code: "ROUTER_UNREACHABLE" });

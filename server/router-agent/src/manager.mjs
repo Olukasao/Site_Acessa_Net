@@ -135,9 +135,13 @@ export class RouterManager {
       let vendor = eq.vendor;
       let model = null;
       let sondado = false;
+      let doCache = false; // true = modelo e certificado vieram do que ja se sabe deste aparelho
+      let anyCert = false; // certificado fora da lista, mas do fabricante certo (ver trustedCertSubject do adaptador)
       if (conhecido && Date.now() - conhecido.at < PROBE_TTL_MS && (!vendor || vendor === conhecido.vendor)) {
         vendor = vendor ?? conhecido.vendor;
         model = conhecido.model;
+        anyCert = Boolean(conhecido.anyCert);
+        doCache = true;
       } else if (!vendor) {
         // Sem "Tipo equipamento" no SGP: reconhece pelo proprio roteador (certificado conhecido + pagina de login, sem login)
         const achado = await this.detectVendor(conn.ip);
@@ -153,22 +157,25 @@ export class RouterManager {
       if (!baseUrl) return { outcome: "requires_validation", vendor, conn, adapter };
       const pins = this.d.endpoints[vendor]?.pins ?? [];
       if (adapter.support === "supported" && !model) {
-        try {
-          model = (await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins }) })).model;
-          sondado = true;
-        } catch (error) {
-          if (error?.code === "ROUTER_CERT_UNKNOWN") {
-            // certificado novo: nao entra no roteador, mas descobre o modelo pela pagina de login
-            const achado = await this.identifyAnyCert(adapter, baseUrl);
-            return { outcome: "requires_validation", vendor, model: achado?.model ?? null, conn, adapter };
-          }
-          throw error;
+        // modelo pela pagina de login (publica, sem senha); nao depende do certificado
+        model = (await this.identifyAnyCert(adapter, baseUrl))?.model ?? null;
+        sondado = true;
+      }
+      // Certificado: na lista (pin) = confiavel. Fora da lista mas do dono certo (ex.: Huawei) = mesma interface e mesma senha padrao,
+      // segue com o certificado aceito. Outro dono = nao entra (em validacao).
+      if (adapter.support === "supported" && model && !doCache && baseUrl.startsWith("https:")) {
+        const pin = await checkPin(baseUrl, pins, this.d.routerTimeoutMs);
+        if (pin.unreachable) throw Object.assign(new Error("roteador nao respondeu"), { code: "ROUTER_UNREACHABLE" });
+        if (!pin.ok) {
+          const cert = adapter.trustedCertSubject ? await peekCertificate(baseUrl, this.d.routerTimeoutMs) : null;
+          if (!(cert?.ok && adapter.trustedCertSubject.test(cert.subject ?? ""))) return { outcome: "requires_validation", vendor, model, conn, adapter };
+          anyCert = true;
         }
       }
-      if (sondado && chave && model) this.probeCache.set(chave, { vendor, model, at: Date.now() });
-      // so o modelo validado em bancada e alterado; os outros do mesmo fabricante ficam "em validacao"
+      if (sondado && chave && model) this.probeCache.set(chave, { vendor, model, anyCert, at: Date.now() });
+      // so modelos da familia validada em bancada sao alterados; os outros ficam "em validacao"
       if (adapter.support === "supported" && typeof adapter.supportsModel === "function" && !adapter.supportsModel(model)) return { outcome: "requires_validation", vendor, model, conn, adapter };
-      return { outcome: "ok", vendor, model, conn, adapter, baseUrl, pins };
+      return { outcome: "ok", vendor, model, conn, adapter, baseUrl, pins, anyCert };
     }));
   }
 
@@ -364,7 +371,7 @@ export class RouterManager {
         async () => {
           const credentials = this.d.credentials.get(r.vendor);
           if (!credentials) return report("unsupported", { errorCode: "ROUTER_REQUIRES_VALIDATION" });
-          const ctx = { baseUrl: r.baseUrl, credentials, http: routerHttp(r.baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins: r.pins ?? [] }) };
+          const ctx = { baseUrl: r.baseUrl, credentials, http: routerHttp(r.baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins: r.pins ?? [], anyCert: Boolean(r.anyCert) }) };
           let session = null;
           try {
             await report("authenticating");
