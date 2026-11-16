@@ -6,15 +6,41 @@ const VENDOR_LABEL = { tplink: "TP-Link", huawei: "Huawei", stavix: "Stavix", me
 const KNOWN_CODES = new Set(["ROUTER_OFFLINE", "ROUTER_UNSUPPORTED", "ROUTER_REQUIRES_VALIDATION", "ROUTER_UNREACHABLE", "ROUTER_AUTH_FAILED", "ROUTER_NOT_IDENTIFIED", "SGP_UNAVAILABLE", "CONTRACT_NOT_FOUND", "VERIFY_FAILED", "INTERNAL"]);
 const codeOf = (error) => (KNOWN_CODES.has(error?.code) ? error.code : "INTERNAL");
 
-/** Limite de tarefas simultaneas (geral e por fabricante). */
+/** Rejeita se a promessa nao terminar no prazo (o trabalho em si nao e cancelado: quem chamou segue em frente). */
+export const withTimeout = (promise, ms, code = "INTERNAL", what = "operacao") =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Object.assign(new Error(`${what}: tempo esgotado`), { code })), ms);
+    promise.then(
+      (v) => (clearTimeout(timer), resolve(v)),
+      (e) => (clearTimeout(timer), reject(e))
+    );
+  });
+
+/** Limite de tarefas simultaneas (geral e por fabricante). Quem espera a vez por mais que `waitMs` desiste (nunca fica preso). */
 export class Limiter {
   constructor(max) {
     this.max = max;
     this.running = 0;
     this.queue = [];
   }
-  async run(fn) {
-    if (this.running >= this.max) await new Promise((resolve) => this.queue.push(resolve));
+  async run(fn, { waitMs = Infinity, code = "ROUTER_UNREACHABLE" } = {}) {
+    if (this.running >= this.max) {
+      await new Promise((resolve, reject) => {
+        let timer;
+        const entry = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        if (Number.isFinite(waitMs)) {
+          timer = setTimeout(() => {
+            const i = this.queue.indexOf(entry);
+            if (i >= 0) this.queue.splice(i, 1);
+            reject(Object.assign(new Error("fila do roteador ocupada"), { code }));
+          }, waitMs);
+        }
+        this.queue.push(entry);
+      });
+    }
     this.running++;
     try {
       return await fn();
@@ -142,6 +168,11 @@ export class RouterManager {
     }
     return this.withRouter(r, async (ctx, session) => {
       const info = await r.adapter.getWifiInfo(ctx, session);
+      if (!info.bands?.length) {
+        // nao leu nenhuma rede: nunca diz "troca disponivel" sem saber quais redes existem
+        this.d.log?.warn?.(`[router-agent] ${r.vendor}: nenhuma rede lida (${(info.errors ?? []).join("; ") || "sem detalhe"})`);
+        return report("failed", { errorCode: "ROUTER_UNREACHABLE" });
+      }
       const id = await r.adapter.identify(ctx);
       return report("completed", {
         result: this.statusResult({
@@ -201,7 +232,7 @@ export class RouterManager {
     }
   }
 
-  /** Conecta, autentica, executa e sempre encerra a sessao do painel. Respeita o limite por fabricante. */
+  /** Conecta, autentica, executa e sempre encerra a sessao do painel. Tudo com prazo: nada fica preso. */
   async withRouter(r, fn, report) {
     const limiter = this.d.perVendor.get(r.vendor) ?? this.d.perVendor.get("*");
     // um acesso por vez a cada roteador: o painel aceita poucas sessoes e um login novo derruba o anterior
@@ -209,24 +240,42 @@ export class RouterManager {
     const key = r.conn.ip;
     if (!this.perRouter.has(key)) this.perRouter.set(key, new Limiter(1));
     const routerLock = this.perRouter.get(key);
-    return routerLock.run(() => limiter.run(async () => {
-      const credentials = this.d.credentials.get(r.vendor);
-      if (!credentials) return report("unsupported", { errorCode: "ROUTER_REQUIRES_VALIDATION" });
-      const ctx = { baseUrl: r.baseUrl, credentials, http: routerHttp(r.baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins: r.pins ?? [] }) };
-      let session = null;
-      try {
-        await report("authenticating");
-        try {
-          session = await r.adapter.authenticate(ctx);
-        } catch (error) {
-          this.d.log?.warn?.(`[router-agent] login ${r.vendor}: ${String(error?.message ?? error).slice(0, 160)}`);
-          return report("failed", { errorCode: error?.code === "ROUTER_UNREACHABLE" ? "ROUTER_UNREACHABLE" : "ROUTER_AUTH_FAILED" });
-        }
-        return await fn(ctx, session);
-      } finally {
-        if (session) await r.adapter.closeSession(ctx, session).catch(() => undefined);
-        if (routerLock.running <= 1 && routerLock.queue.length === 0) this.perRouter.delete(key);
-      }
-    }));
+    const t0 = Date.now();
+    const fase = (nome) => {
+      const seg = Math.round((Date.now() - t0) / 1000);
+      if (seg >= 20) this.d.log?.warn?.(`[router-agent] ${r.vendor}: ${nome} so terminou apos ${seg}s`);
+    };
+    const trabalho = () =>
+      limiter.run(
+        async () => {
+          const credentials = this.d.credentials.get(r.vendor);
+          if (!credentials) return report("unsupported", { errorCode: "ROUTER_REQUIRES_VALIDATION" });
+          const ctx = { baseUrl: r.baseUrl, credentials, http: routerHttp(r.baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins: r.pins ?? [] }) };
+          let session = null;
+          try {
+            await report("authenticating");
+            try {
+              session = await withTimeout(r.adapter.authenticate(ctx), 70_000, "ROUTER_UNREACHABLE", "login");
+            } catch (error) {
+              this.d.log?.warn?.(`[router-agent] login ${r.vendor}: ${String(error?.message ?? error).slice(0, 160)}`);
+              return report("failed", { errorCode: error?.code === "ROUTER_UNREACHABLE" ? "ROUTER_UNREACHABLE" : "ROUTER_AUTH_FAILED" });
+            }
+            fase("login");
+            // teto para toda a operacao no roteador (duas redes levam cerca de 30 s)
+            return await withTimeout(fn(ctx, session), 180_000, "INTERNAL", "operacao no roteador");
+          } finally {
+            // sair do painel nunca pode prender a vez do roteador: tem prazo e, se passar dele, o navegador e encerrado a forca
+            if (session) {
+              await withTimeout(r.adapter.closeSession(ctx, session), 25_000, "INTERNAL", "sair do painel").catch((error) =>
+                this.d.log?.warn?.(`[router-agent] ${r.vendor}: ${String(error?.message ?? error).slice(0, 120)}`)
+              );
+            }
+            fase("saida");
+            if (routerLock.running <= 1 && routerLock.queue.length === 0) this.perRouter.delete(key);
+          }
+        },
+        { waitMs: 120_000 }
+      );
+    return routerLock.run(trabalho, { waitMs: 120_000 });
   }
 }

@@ -245,3 +245,30 @@ test("inventário de um contrato: offline, certificado de fabricante novo e fabr
   const own = await managerWith({ sgp: { equipmentType: async () => ({ found: true, label: "PARTICULAR", vendor: "customer_owned" }) } }).inventoryOne("1001");
   assert.equal(own.management, "unsupported");
 });
+
+test("nada fica preso: espera da vez do roteador tem prazo e passos lentos são cortados", async () => {
+  const { Limiter, withTimeout } = await import("../src/manager.mjs");
+  const lim = new Limiter(1);
+  let solta;
+  const preso = lim.run(() => new Promise((r) => (solta = r))); // alguem segurando a vez (ex.: sair do painel travou)
+  await assert.rejects(lim.run(async () => "x", { waitMs: 30 }), (e) => e.code === "ROUTER_UNREACHABLE");
+  assert.equal(lim.queue.length, 0); // quem desistiu sai da fila
+  solta();
+  await preso;
+  assert.equal(await lim.run(async () => "ok", { waitMs: 30 }), "ok"); // a vez foi devolvida
+  await assert.rejects(withTimeout(new Promise(() => {}), 20, "INTERNAL", "passo"), /tempo esgotado/);
+  assert.equal(await withTimeout(Promise.resolve(7), 50), 7);
+});
+
+test("navegador esquecido é encerrado pelo faxineiro", async () => {
+  const { reapBrowsers, killBrowser } = await import("../src/adapters/huaweiOnt.mjs");
+  assert.equal(typeof reapBrowsers, "function");
+  let fechado = 0;
+  let morto = 0;
+  await killBrowser({ close: async () => void fechado++, process: () => ({ kill: () => void morto++ }) });
+  assert.deepEqual([fechado, morto], [1, 1]);
+  // fechar que nunca termina nao trava: passa do prazo e mata o processo
+  let matou = false;
+  await killBrowser({ close: () => new Promise(() => {}), process: () => ({ kill: () => (matou = true) }) });
+  assert.equal(matou, true);
+});

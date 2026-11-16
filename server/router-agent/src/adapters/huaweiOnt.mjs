@@ -26,6 +26,35 @@ export function parseProductName(html) {
 
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
+/** Espera uma promessa por no maximo `ms` (sem lancar): usada para sair do painel sem nunca travar. */
+const bound = (promise, ms) => Promise.race([Promise.resolve(promise).catch(() => undefined), new Promise((resolve) => setTimeout(resolve, ms))]);
+
+/**
+ * Navegadores abertos agora. Se algum passar de MAX_BROWSER_MS (travou ao sair do painel, por exemplo) o faxineiro o
+ * encerra a forca: um navegador esquecido segura uma vaga de sessao no roteador e consome memoria do servidor.
+ */
+const liveBrowsers = new Map();
+const MAX_BROWSER_MS = 4 * 60_000;
+export async function killBrowser(browser) {
+  await bound(browser.close(), 6000);
+  try {
+    browser.process?.()?.kill("SIGKILL");
+  } catch {
+    // ja encerrado
+  }
+}
+export async function reapBrowsers(maxAgeMs = MAX_BROWSER_MS) {
+  let reaped = 0;
+  for (const [browser, since] of [...liveBrowsers]) {
+    if (Date.now() - since < maxAgeMs) continue;
+    liveBrowsers.delete(browser);
+    await killBrowser(browser);
+    reaped++;
+  }
+  return reaped;
+}
+setInterval(() => void reapBrowsers(), 30_000).unref();
+
 export class HuaweiOntAdapter extends BaseRouterAdapter {
   vendor = "huawei";
   support = "supported";
@@ -61,6 +90,7 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
 
     const { chromium } = await import("playwright-core");
     const browser = await (this.launch ?? ((o) => chromium.launch(o)))({ headless: true, executablePath: this.browserPath });
+    liveBrowsers.set(browser, Date.now());
     try {
       const context = await browser.newContext({ ignoreHTTPSErrors: true, javaScriptEnabled: true, acceptDownloads: false });
       const origin = new URL(ctx.baseUrl).origin;
@@ -84,7 +114,8 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
       if (!loggedIn) throw fail("ROUTER_AUTH_FAILED", "login recusado");
       return { browser, context, page, origin, dialogs };
     } catch (error) {
-      await browser.close().catch(() => undefined);
+      liveBrowsers.delete(browser);
+      await killBrowser(browser);
       throw error;
     }
   }
@@ -103,14 +134,19 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
   async getWifiInfo(_ctx, session) {
     const bands = [];
     const ssids = {};
+    const errors = [];
     for (const band of ["2.4GHz", "5GHz"]) {
-      const info = await this.readBand(session, band).catch(() => null);
-      if (info?.ssid) {
-        bands.push(band);
-        ssids[band] = info.ssid.slice(0, 32);
+      try {
+        const info = await this.readBand(session, band);
+        if (info?.ssid) {
+          bands.push(band);
+          ssids[band] = info.ssid.slice(0, 32);
+        } else errors.push(`${band}: pagina sem SSID`);
+      } catch (error) {
+        errors.push(`${band}: ${String(error?.message ?? error).split("\n")[0].slice(0, 80)}`);
       }
     }
-    return { bands, ssids };
+    return { bands, ssids, errors };
   }
 
   /** Depois de salvar o roteador fica alguns segundos sem responder (aplica o Wi-Fi): tenta ler de novo ate ele voltar. */
@@ -168,12 +204,13 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
 
   async closeSession(_ctx, session) {
     try {
-      // sair pelo proprio painel (libera a sessao do roteador, que tem poucas vagas)
-      await session.page.goto(`${session.origin}/index.asp`, { waitUntil: "domcontentloaded" }).catch(() => undefined);
-      await session.page.evaluate(() => (typeof window.logoutfunc === "function" ? window.logoutfunc() : null)).catch(() => undefined);
-      await session.page.waitForTimeout(1500);
+      // sair pelo proprio painel (libera a sessao do roteador, que tem poucas vagas); cada passo tem prazo
+      await bound(session.page.goto(`${session.origin}/index.asp`, { waitUntil: "domcontentloaded", timeout: 8000 }), 10_000);
+      await bound(session.page.evaluate(() => (typeof window.logoutfunc === "function" ? window.logoutfunc() : null)), 5000);
+      await bound(session.page.waitForTimeout(1200), 3000);
     } finally {
-      await session.browser.close().catch(() => undefined);
+      liveBrowsers.delete(session.browser);
+      await killBrowser(session.browser);
     }
   }
 }
