@@ -3801,7 +3801,7 @@ function AttendanceDetailsStep({ diagnosis, loading, onAnswer, onBack, onTextAns
   const isRouterPassword = question?.id === "router_password_new";
   const routerPasswordError = isRouterPassword ? validateRouterPasswordClientSide(textAnswer) : "";
 
-  // "Troca de senha do roteador": primeiro a Central tenta trocar sozinha (mesma funcao da aba Internet); se nao der,
+  // "Troca de senha/nome do roteador": primeiro a Central tenta trocar sozinha (mesma funcao da aba Internet); se nao der,
   // ela memoriza os dados e abre o chamado. Se a troca automatica nao serve (modelo, piloto, servico fora), segue o pedido normal.
   const wantsAuto = selectedCategory?.id === "router_password";
   const [manual, setManual] = useState(false);
@@ -4013,7 +4013,7 @@ function AttendanceReviewStep({
         ) : null}
       </div>
 
-      {/* Troca de senha do roteador nao tem visita: nao pede a localizacao da casa. */}
+      {/* Troca de senha/nome do roteador nao tem visita: nao pede a localizacao da casa. */}
       {selectedCategory?.id !== "router_password" ? (
         <LocationCaptureField value={locationDraft} onChange={onLocationDraftChange} disabled={creatingTicket} />
       ) : null}

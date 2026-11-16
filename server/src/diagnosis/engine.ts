@@ -239,7 +239,7 @@ function evaluateRouterPassword(input: DiagnosisInput, baseSummary: DiagnosisSum
     customerMessage: "Vamos enviar a nova senha para a equipe tecnica realizar a alteracao.",
     canOpenTicket: true,
     structuredDescription: buildTicketDescription({
-      title: "Troca de senha do roteador",
+      title: "Troca de senha/nome do roteador",
       classification: "TROCA_SENHA_ROTEADOR",
       contract: input.contract,
       connection: input.connection,

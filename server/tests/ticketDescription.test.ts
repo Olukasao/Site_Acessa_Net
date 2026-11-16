@@ -43,7 +43,7 @@ describe("padrao de conteudo do chamado (DIAGNOSTICO APP ACESSANET)", () => {
 
     const text = result.structuredDescription ?? "";
     expect(text.startsWith("DIAGNOSTICO APP ACESSANET")).toBe(true);
-    expect(text).toMatch(/Troca de senha do roteador \| Prioridade: \w+/);
+    expect(text).toMatch(/Troca de senha/nome do roteador \| Prioridade: \w+/);
     expect(text).toContain("\nCliente\n");
     expect(text).toContain("\nConexao\n");
     expect(text).toContain("\nSolicitacao\n");

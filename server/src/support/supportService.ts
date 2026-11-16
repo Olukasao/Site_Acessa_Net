@@ -124,7 +124,7 @@ export class SupportService {
 
   /**
    * Chamado de acompanhamento da troca de senha do Wi-Fi: o cliente disse que NAO conseguiu conectar depois da troca
-   * automatica. Usa a mesma classificacao da triagem "Troca de senha do roteador"; o texto nunca leva a senha.
+   * automatica. Usa a mesma classificacao da triagem "Troca de senha/nome do roteador"; o texto nunca leva a senha.
    * Se ja ha chamado aberto no contrato, devolve o protocolo dele (nao abre outro).
    */
   async createWifiFollowUpTicket(input: { customerId: string; contractId: string; description: string }): Promise<{ protocol: string }> {
@@ -134,7 +134,7 @@ export class SupportService {
     const customer = this.store.getCustomer(input.customerId);
     const contactPhone = normalizeBrazilianPhone(customer?.phone ?? "");
     if (!contactPhone) throw new AppError(422, "INVALID_CONTACT_PHONE", "Nao ha telefone de contato valido no cadastro.");
-    const title = supportCategories.find((item) => item.id === "router_password")?.title ?? "Troca de senha do roteador";
+    const title = supportCategories.find((item) => item.id === "router_password")?.title ?? "Troca de senha/nome do roteador";
     const sgpTicket = await this.ticketProvider.createTicket({
       contract,
       categoryTitle: title,

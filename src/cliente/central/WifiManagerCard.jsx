@@ -121,7 +121,7 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
   }, [revealed]);
   useEffect(() => () => setRevealed(null), []);
 
-  // No fluxo de atendimento ("Troca de senha do roteador"): se a troca automatica nao serve para este roteador/momento,
+  // No fluxo de atendimento ("Troca de senha/nome do roteador"): se a troca automatica nao serve para este roteador/momento,
   // avisa a tela para seguir com o pedido normal de chamado.
   useEffect(() => {
     if (!embedded || !onUnavailable || status === null || change) return;

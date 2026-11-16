@@ -23,8 +23,8 @@ export const supportCategories: SupportCategory[] = [
   },
   {
     id: "router_password",
-    title: "Troca de senha do roteador",
-    description: "Solicitar alteracao da senha do Wi-Fi."
+    title: "Troca de senha/nome do roteador",
+    description: "Solicitar alteracao da senha ou do nome do Wi-Fi."
   },
   {
     id: "websites",

@@ -434,7 +434,7 @@ describe("SupportService - historico de chamados (fechados)", () => {
       sgpTicketId: "sgp_1",
       protocol: "260928110100",
       status: "RECEIVED",
-      title: "Troca de senha do roteador",
+      title: "Troca de senha/nome do roteador",
       description: "...",
       timeline: []
     });
