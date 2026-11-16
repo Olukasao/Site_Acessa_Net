@@ -520,6 +520,11 @@ export async function clienteRequest(path, options = {}) {
     if (nextToken) {
       return clienteRequest(path, { ...options, retryOnUnauthorized: false });
     }
+  } else if (response.status === 401 && auth && !retryOnUnauthorized) {
+    // A sessao foi renovada e o servidor AINDA recusa: a sessao acabou de verdade. Volta ao login em vez de ficar com a
+    // tela velha (e avisos como "Contrato com pendencia") por cima de uma sessao que nao existe mais.
+    clearTokens();
+    notifySessionExpired();
   }
 
   if (!response.ok) {

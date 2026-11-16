@@ -476,6 +476,12 @@ export default function ClienteArea() {
       (item) => !item.ok
     );
 
+    // Qualquer chamada recusada com 401 (mesmo depois de tentar renovar) = sessao perdida: volta ao login.
+    if (failures.some((item) => item.error instanceof ClienteApiError && item.error.status === 401)) {
+      window.dispatchEvent(new Event("acessanet:session-expired"));
+      return;
+    }
+
     if (failures.length === 5) {
       setDataError(resolveErrorMessage(failures[0].error, "Não foi possível carregar seus dados."));
     }
@@ -937,6 +943,7 @@ export default function ClienteArea() {
           onRefresh={refreshPageData}
           onSignNow={handleSignNow}
           pendingSignatures={pendingSignatures}
+          stale={Boolean(dataError)}
           tickets={tickets}
         />
       )}
@@ -1873,14 +1880,15 @@ function ClienteHome({
   onRefresh,
   onSignNow,
   pendingSignatures = [],
+  stale = false,
   tickets
 }) {
   const activeTicket = getActiveTicket(currentTicket, tickets, contract?.id);
   const offline = isOfflineConnection(connection, contract);
   const payableInvoice = getNextPayableInvoice(invoiceData);
   const announcements = useMemo(
-    () => buildHomeAnnouncements({ connection, contract }),
-    [connection, contract]
+    () => buildHomeAnnouncements({ connection, contract, stale }),
+    [connection, contract, stale]
   );
   const benefits = Array.isArray(contract?.benefits) ? contract.benefits : [];
   const initialLoading = loading && !connection && !billing;
@@ -2225,7 +2233,7 @@ function getNextPayableInvoice(invoiceData) {
   return invoices.find((invoice) => invoice.status === "OPEN") || null;
 }
 
-function buildHomeAnnouncements({ connection, contract }) {
+function buildHomeAnnouncements({ connection, contract, stale = false }) {
   const items = [];
 
   if (connection?.knownIncident) {
@@ -2239,7 +2247,8 @@ function buildHomeAnnouncements({ connection, contract }) {
 
   // Só avisa quando o SGP diz que o contrato está suspenso ou cancelado. Status desconhecido (dados ainda não
   // carregados, sessão caindo) não é pendência: antes aparecia "Contrato com pendência / Não informado".
-  if (contract && (contract.status === "SUSPENDED" || contract.status === "CANCELED")) {
+  // Nao avisa com dados velhos: se a ultima carga falhou, o status do contrato pode nao valer mais.
+  if (!stale && contract && (contract.status === "SUSPENDED" || contract.status === "CANCELED")) {
     items.push({
       id: "contract",
       tone: "red",
