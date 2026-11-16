@@ -349,6 +349,15 @@ export class RouterWifiService {
     return this.config.pilotContracts.length === 0 || this.config.pilotContracts.includes(contractId);
   }
 
+  /** Contrato de teste do piloto (lista explicita): sem limite de tentativas, para o suporte testar a vontade. */
+  private isTestContract(contractId: string) {
+    return this.config.pilotContracts.length > 0 && this.config.pilotContracts.includes(contractId);
+  }
+  private async consume(contractId: string, key: string, cfg: { limit: number; windowMs: number }) {
+    if (this.isTestContract(contractId)) return;
+    await this.limiter.consume(key, cfg);
+  }
+
   /** O agente interno mandou sinal de vida nos ultimos segundos? */
   async agentOnline(): Promise<boolean> {
     const last = await this.repo.lastAgent();
@@ -384,7 +393,7 @@ export class RouterWifiService {
     if (open) return { available: true as const, agentOnline: true, job: publicJob(open), pendingChange };
     const last = await this.repo.latestFinished(contractId, "status");
     if (last?.finishedAt && Date.now() - Date.parse(last.finishedAt) < STATUS_FRESH_MS) return { available: true as const, agentOnline: true, job: publicJob(last), pendingChange };
-    await this.limiter.consume(`router_wifi:status:contract:${contractId}`, STATUS_PER_CONTRACT);
+    await this.consume(contractId, `router_wifi:status:contract:${contractId}`, STATUS_PER_CONTRACT);
     const job = await this.repo.create({ customerId, contractId, kind: "status", bands: [], secretEnc: null });
     return { available: true as const, agentOnline: true, job: publicJob(job), pendingChange };
   }
@@ -404,7 +413,7 @@ export class RouterWifiService {
     ip: string;
     contractId: string;
     newPassword: string;
-    bands: WifiBand[];
+    bands?: WifiBand[];
     currentPassword: string;
   }) {
     await this.ownership.assertContract(input.customerId, input.contractId);
@@ -414,19 +423,19 @@ export class RouterWifiService {
 
     const problem = validateWifiPassword(input.newPassword);
     if (problem) throw new AppError(422, "INVALID_WIFI_PASSWORD", problem);
-    const bands = [...new Set(input.bands)];
-    if (!bands.length || !bands.every((band) => WIFI_BANDS.includes(band))) throw new AppError(422, "INVALID_BANDS", "Escolha a rede 2.4 GHz, 5 GHz ou as duas.");
+    // A senha sempre vale para as duas redes (2.4 e 5G): o pedido nao escolhe banda.
+    const bands: WifiBand[] = [...WIFI_BANDS];
 
-    await this.reauth(input.cpfHash, input.currentPassword);
+    await this.reauth(input.cpfHash, input.currentPassword, input.contractId);
 
     // Ja ha uma troca em andamento: responde isso antes de gastar as cotas (clicar de novo nao pode consumir o limite do cliente)
     await this.expire(true);
     if (await this.repo.findOpenChange(input.contractId)) {
       throw new AppError(409, "WIFI_CHANGE_IN_PROGRESS", "Já existe uma alteração em andamento. Aguarde terminar.");
     }
-    await this.limiter.consume(`router_wifi:change:customer:${input.customerId}`, CHANGE_PER_CUSTOMER);
-    await this.limiter.consume(`router_wifi:change:contract:${input.contractId}`, CHANGE_PER_CONTRACT);
-    await this.limiter.consume(`router_wifi:change:ip:${sha256(input.ip)}`, CHANGE_PER_IP);
+    await this.consume(input.contractId, `router_wifi:change:customer:${input.customerId}`, CHANGE_PER_CUSTOMER);
+    await this.consume(input.contractId, `router_wifi:change:contract:${input.contractId}`, CHANGE_PER_CONTRACT);
+    await this.consume(input.contractId, `router_wifi:change:ip:${sha256(input.ip)}`, CHANGE_PER_IP);
 
     const secretEnc = publicEncrypt(
       { key: this.publicKey!, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
@@ -437,8 +446,8 @@ export class RouterWifiService {
   }
 
   /** Confirma que e o titular: pede de novo a senha da Central (a sessao sozinha nao basta). */
-  private async reauth(cpfHash: string, currentPassword: string) {
-    await this.limiter.consume(`router_wifi:reauth:${cpfHash}:check`, REAUTH_FAILURES);
+  private async reauth(cpfHash: string, currentPassword: string, contractId: string) {
+    await this.consume(contractId, `router_wifi:reauth:${cpfHash}:check`, REAUTH_FAILURES);
     const profile = await this.authProfiles.findByCpfHash(cpfHash);
     if (!profile?.passwordHash || !(await verifyPassword(currentPassword, profile.passwordHash))) {
       throw new AppError(403, "REAUTH_FAILED", "Senha da Central incorreta.");
@@ -458,14 +467,14 @@ export class RouterWifiService {
     if (problem) throw new AppError(422, "INVALID_WIFI_NAME", problem);
     const names = buildWifiNames(input.name);
 
-    await this.reauth(input.cpfHash, input.currentPassword);
+    await this.reauth(input.cpfHash, input.currentPassword, input.contractId);
     await this.expire(true);
     if (await this.repo.findOpenChange(input.contractId)) {
       throw new AppError(409, "WIFI_CHANGE_IN_PROGRESS", "Já existe uma alteração em andamento. Aguarde terminar.");
     }
-    await this.limiter.consume(`router_wifi:name:customer:${input.customerId}`, CHANGE_PER_CUSTOMER);
-    await this.limiter.consume(`router_wifi:name:contract:${input.contractId}`, CHANGE_PER_CONTRACT);
-    await this.limiter.consume(`router_wifi:change:ip:${sha256(input.ip)}`, CHANGE_PER_IP);
+    await this.consume(input.contractId, `router_wifi:name:customer:${input.customerId}`, CHANGE_PER_CUSTOMER);
+    await this.consume(input.contractId, `router_wifi:name:contract:${input.contractId}`, CHANGE_PER_CONTRACT);
+    await this.consume(input.contractId, `router_wifi:change:ip:${sha256(input.ip)}`, CHANGE_PER_IP);
 
     const job = await this.repo.create({ customerId: input.customerId, contractId: input.contractId, kind: "change_ssid", bands: [...WIFI_BANDS], secretEnc: null, params: { names } });
     return publicJob(job);
@@ -500,8 +509,8 @@ export class RouterWifiService {
   async revealLastPassword(input: { customerId: string; cpfHash: string; contractId: string; currentPassword: string }) {
     await this.ownership.assertContract(input.customerId, input.contractId);
     if (!this.availableFor(input.contractId)) throw new AppError(404, "WIFI_MANAGER_UNAVAILABLE", "Esta função ainda não está disponível para você.");
-    await this.limiter.consume(`router_wifi:reveal:customer:${input.customerId}`, REVEAL_LIMIT);
-    await this.reauth(input.cpfHash, input.currentPassword);
+    await this.consume(input.contractId, `router_wifi:reveal:customer:${input.customerId}`, REVEAL_LIMIT);
+    await this.reauth(input.cpfHash, input.currentPassword, input.contractId);
     const last = await this.repo.getLastPassword(input.contractId);
     if (!last || last.customerId !== input.customerId) throw new AppError(404, "NO_LAST_PASSWORD", "Não há uma senha guardada para este contrato.");
     const password = this.decryptFallback(last.passwordEnc);

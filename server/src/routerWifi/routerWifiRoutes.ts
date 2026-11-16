@@ -11,7 +11,7 @@ const changeBody = z
   .object({
     contractId: z.string().trim().min(1).max(64),
     newPassword: z.string().min(1).max(200),
-    bands: z.array(z.enum(["2.4GHz", "5GHz"])).min(1).max(2),
+    bands: z.array(z.enum(["2.4GHz", "5GHz"])).max(2).optional(), // ignorado: a senha sempre vale para as duas redes
     currentPassword: z.string().min(1).max(200)
   })
   .strict();
@@ -94,18 +94,17 @@ export async function registerRouterWifiRoutes(app: FastifyInstance, container: 
       ip: request.ip,
       contractId: body.contractId,
       newPassword: body.newPassword,
-      bands: body.bands,
       currentPassword: body.currentPassword
     });
     // Registro sem a senha: so o fato, o contrato e as redes.
-    request.log.info({ tag: "ROUTER_WIFI", jobId: job.id, contractId: body.contractId, bands: body.bands }, "[ROUTER_WIFI] troca de senha pedida");
+    request.log.info({ tag: "ROUTER_WIFI", jobId: job.id, contractId: body.contractId, bands: "2.4GHz,5GHz" }, "[ROUTER_WIFI] troca de senha pedida");
     await container.centralActivityService.safeRecordAuthenticated({
       auth,
       request,
       eventType: "CUSTOM",
       page: "internet",
       contractId: body.contractId,
-      metadata: { action: "WIFI_PASSWORD_CHANGE", bands: body.bands.join(",") }
+      metadata: { action: "WIFI_PASSWORD_CHANGE", bands: "2.4GHz,5GHz" }
     });
     reply.code(202);
     return { job };

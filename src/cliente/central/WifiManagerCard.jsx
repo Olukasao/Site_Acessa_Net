@@ -8,11 +8,6 @@ import "./wifiManager.css";
  * Minha Internet -> Gerenciar Wi-Fi. A tela so manda o contrato, as redes e as senhas; quem descobre o roteador
  * (pelo SGP) e altera e o servidor. Aparece so quando a funcao esta ligada para o contrato.
  */
-const BAND_OPTIONS = [
-  { id: "both", label: "Ambas", bands: ["2.4GHz", "5GHz"] },
-  { id: "2.4GHz", label: "2.4 GHz", bands: ["2.4GHz"] },
-  { id: "5GHz", label: "5 GHz", bands: ["5GHz"] }
-];
 const RULES = [
   { label: "8 a 63 caracteres", test: (v) => v.length >= 8 && v.length <= 63 },
   { label: "Uma letra maiúscula", test: (v) => /[A-Z]/.test(v) },
@@ -83,7 +78,6 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
   const contractId = contract?.id;
   const [status, setStatus] = useState(null); // { available, job }
   const statusJob = useJobPolling(status?.job ?? null);
-  const [band, setBand] = useState("both");
   const [password, setPassword] = useState("");
   const [current, setCurrent] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -164,7 +158,6 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
   const canChange = info?.canChangePassword === true;
   const ruleState = RULES.map((r) => ({ ...r, met: r.test(password) }));
   const valid = ruleState.every((r) => r.met);
-  const selectedBands = BAND_OPTIONS.find((o) => o.id === band)?.bands ?? [];
   const nameError = nameProblem(baseName);
   const busy = sending || (change && !change.done);
 
@@ -203,7 +196,7 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
       const r =
         action === "name"
           ? await changeWifiName({ contractId, name: baseName, currentPassword: current })
-          : await changeWifiPassword({ contractId, newPassword: password, bands: selectedBands, currentPassword: current });
+          : await changeWifiPassword({ contractId, newPassword: password, currentPassword: current });
       setConfirmedJob(null);
       setChangeJobRaw(r.job);
       setConfirming(false);
@@ -272,15 +265,6 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
 
       {canChange && !busy && !change?.needsConfirmation ? (
         <form className="wifi-form" onSubmit={(e) => { e.preventDefault(); if (valid) ask("password"); }}>
-          <fieldset className="wifi-bands">
-            <legend>Rede</legend>
-            {BAND_OPTIONS.filter((o) => o.bands.every((b) => (info.bands ?? []).includes(b))).map((o) => (
-              <label key={o.id} className={band === o.id ? "is-selected" : ""}>
-                <input type="radio" name="wifi-band" value={o.id} checked={band === o.id} onChange={() => setBand(o.id)} />
-                {o.label}
-              </label>
-            ))}
-          </fieldset>
           <label htmlFor="wifi-new-password">Nova senha do Wi-Fi</label>
           <PasswordInput id="wifi-new-password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder="Nova senha" />
           <ul className="wifi-rules">
@@ -289,7 +273,7 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
             ))}
           </ul>
           <button type="submit" className="home-btn home-btn-primary" disabled={!valid}><KeyRound size={16} /> Alterar senha</button>
-          <p className="wifi-note">Atenção: depois da alteração, seus aparelhos vão precisar da nova senha.</p>
+          <p className="wifi-note">A senha é trocada nas duas redes (2.4 e 5G). Depois da alteração, seus aparelhos vão precisar da nova senha.</p>
         </form>
       ) : null}
 
@@ -343,7 +327,7 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
             ) : action === "name" ? (
               <p>Novos nomes: <strong>{baseName} 2.4</strong> e <strong>{baseName} 5G</strong>. Os aparelhos conectados vão cair e precisar escolher a rede de novo.</p>
             ) : (
-              <p>Rede: <strong>{BAND_OPTIONS.find((o) => o.id === band)?.label}</strong>. Todos os aparelhos conectados vão cair e precisar da nova senha.</p>
+              <p>A nova senha vale para as duas redes (<strong>2.4 e 5G</strong>). Todos os aparelhos conectados vão cair e precisar da nova senha.</p>
             )}
             <label htmlFor="wifi-current-password">Para sua segurança, digite a senha da Central</label>
             <PasswordInput id="wifi-current-password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" placeholder="Senha da Central" />
