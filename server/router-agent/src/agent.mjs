@@ -111,7 +111,7 @@ export class Agent {
   }
 
   claim(free) {
-    return this.central("/api/internal/router-agent/claim", { agentId: this.cfg.agentId, max: Math.min(free, 10), dryRun: this.cfg.dryRun, version: AGENT_VERSION, waitMs: this.cfg.longPollMs }, this.cfg.longPollMs + 15000);
+    return this.central("/api/internal/router-agent/claim", { agentId: this.cfg.agentId, max: Math.min(free, 10), dryRun: this.cfg.dryRun, version: AGENT_VERSION, ...(this.cfg.longPollMs > 0 ? { waitMs: this.cfg.longPollMs } : {}) }, this.cfg.longPollMs + 15000);
   }
 
   async process(job) {
