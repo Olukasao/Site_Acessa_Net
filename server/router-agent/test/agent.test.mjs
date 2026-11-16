@@ -272,3 +272,18 @@ test("navegador esquecido é encerrado pelo faxineiro", async () => {
   await killBrowser({ close: () => new Promise(() => {}), process: () => ({ kill: () => (matou = true) }) });
   assert.equal(matou, true);
 });
+
+test("pedido que a Central já encerrou: o agente para antes de entrar no roteador", async () => {
+  const adapter = new FakeAdapter();
+  let entrou = 0;
+  const original = adapter.authenticate.bind(adapter);
+  adapter.authenticate = async (ctx) => (entrou++, original(ctx));
+  registerAdapter(adapter);
+  const m = managerWith({ sgp: fakeVendor });
+  const report = async (state) => {
+    if (state === "authenticating") throw Object.assign(new Error("encerrado"), { code: "JOB_ABORTED" });
+  };
+  await assert.rejects(m.changePassword({ contractId: "1001", kind: "change_password", bands: ["5GHz"], secretEnc: "x" }, report), (e) => e.code === "JOB_ABORTED");
+  assert.equal(entrou, 0); // nunca fez login no roteador
+  assert.equal(adapter.changed, null);
+});

@@ -76,7 +76,7 @@ export class Agent {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15000)
     });
-    if (!res.ok) throw new Error(`Central respondeu ${res.status} em ${path}`);
+    if (!res.ok) throw Object.assign(new Error(`Central respondeu ${res.status} em ${path}`), { status: res.status });
     return res.json();
   }
 
@@ -95,9 +95,16 @@ export class Agent {
 
   async process(job) {
     const started = Date.now();
+    const FINAIS = ["completed", "failed", "unsupported", "unconfirmed"];
     const report = async (state, extra = {}) => {
-      await this.central(`/api/internal/router-agent/jobs/${job.id}`, { agentId: this.cfg.agentId, state, ...extra }).catch((e) => this.log.warn?.(`[router-agent] relatorio ${job.id}: ${e.message}`));
-      if (["completed", "failed", "unsupported", "unconfirmed"].includes(state)) {
+      try {
+        await this.central(`/api/internal/router-agent/jobs/${job.id}`, { agentId: this.cfg.agentId, state, ...extra });
+      } catch (error) {
+        // 409 num andamento = a Central ja encerrou este pedido (expirou, por exemplo): nao mexe mais no roteador
+        if (error?.status === 409 && !FINAIS.includes(state)) throw Object.assign(new Error("pedido ja encerrado pela Central"), { code: "JOB_ABORTED" });
+        this.log.warn?.(`[router-agent] relatorio ${job.id}: ${error.message}`);
+      }
+      if (FINAIS.includes(state)) {
         // Log sem senha, sem IP e sem credencial: so a tarefa, o tipo, o resultado e o tempo.
         this.log.info?.(`[router-agent] ${job.kind} ${job.id} -> ${state}${extra.errorCode ? ` (${extra.errorCode})` : ""} em ${Date.now() - started} ms`);
       }
@@ -107,6 +114,10 @@ export class Agent {
       else if (job.kind === "change_password") await this.manager.changePassword(job, report);
       else await report("failed", { errorCode: "INTERNAL" });
     } catch (error) {
+      if (error?.code === "JOB_ABORTED") {
+        this.log.warn?.(`[router-agent] ${job.kind} ${job.id}: ${error.message}; roteador nao foi tocado`);
+        return;
+      }
       this.log.error?.(`[router-agent] ${job.id}: ${error?.message ?? error}`);
       await report(job.kind === "change_password" ? "unconfirmed" : "failed", { errorCode: "INTERNAL" });
     }
