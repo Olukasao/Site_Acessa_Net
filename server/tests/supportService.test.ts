@@ -460,3 +460,39 @@ describe("SupportService - historico de chamados (fechados)", () => {
     expect(current.ticket?.openedAt).toBe(localTicket.createdAt);
   });
 });
+
+describe("SupportService.createWifiFollowUpTicket", () => {
+  function setup(existingOpen: boolean) {
+    const store = new InMemoryStore();
+    const contract = seedContract(store);
+    const createTicket = vi.fn().mockResolvedValue({ sgpTicketId: "88", protocol: "261116000099", rawStatus: "aberto" });
+    const provider: TicketProvider = {
+      createTicket,
+      getTicketStatus: vi.fn(),
+      getTicketHistory: vi.fn(),
+      listTicketsByContract: vi.fn().mockResolvedValue([]),
+      listOccurrencesByContract: vi.fn().mockResolvedValue([])
+    };
+    const network: NetworkProvider = { getConnectionStatus: vi.fn().mockResolvedValue(store.getConnection(contract.id)) };
+    const service = new SupportService(store, network, provider, mockAppointmentProvider, mockBillingProvider);
+    // outro chamado ja aberto no contrato (ex.: visita agendada)
+    vi.spyOn(service as unknown as { findOpenTicketByContract: () => Promise<unknown> }, "findOpenTicketByContract").mockResolvedValue(existingOpen ? { protocol: "261100000001" } : null);
+    return { service, contract, createTicket };
+  }
+
+  it("abre chamado PROPRIO mesmo com outro chamado aberto (nunca reaproveita o outro e perde os dados da troca)", async () => {
+    const { service, contract, createTicket } = setup(true);
+    const out = await service.createWifiFollowUpTicket({ customerId: contract.customerId, contractId: contract.id, description: "Redes: 2.4 GHz.\nNova senha escolhida pelo cliente: Teste#123" });
+    expect(out.protocol).toBe("261116000099");
+    expect(createTicket).toHaveBeenCalledTimes(1);
+    const sent = createTicket.mock.calls[0]![0] as { description: string; classification: string; contactPhone: string };
+    expect(sent.description).toContain("Nova senha escolhida pelo cliente: Teste#123");
+    expect(sent.description).toContain("Telefone para contato:");
+    expect(sent.classification).toBe("TROCA_SENHA_ROTEADOR");
+  });
+
+  it("outro cliente não abre chamado em contrato alheio", async () => {
+    const { service, contract } = setup(false);
+    await expect(service.createWifiFollowUpTicket({ customerId: "customer_outro", contractId: contract.id, description: "x" })).rejects.toBeInstanceOf(AppError);
+  });
+});

@@ -1,3 +1,4 @@
+import { safeError } from "./safe.mjs";
 import { adapterFor, allAdapters } from "./adapters/registry.mjs";
 import { checkPin, peekCertificate, routerHttp } from "./http.mjs";
 import { timed, timingsStore } from "./timing.mjs";
@@ -286,7 +287,7 @@ export class RouterManager {
           // accepted: o roteador aceitou e a rede continua igual (nao e prova de que a senha mudou; a Central mostra "nao confirmado")
           return report("completed", { result: { bands: job.bands, verified: verified === true, accepted: true, vendor: VENDOR_LABEL[r.vendor] ?? null, model: r.model ?? null } });
         } catch (error) {
-          this.d.log?.warn?.(`[router-agent] troca ${r.vendor}: ${String(error?.message ?? error).slice(0, 160)}`);
+          this.d.log?.warn?.(`[router-agent] troca ${r.vendor}: ${safeError(error)}`);
           // Depois de mandar a alteracao nao da para saber se o roteador aplicou: nao confirmado (e nunca repetimos sozinhos).
           if (applied || error?.code !== "ROUTER_UNREACHABLE") return report("unconfirmed", { errorCode: applied ? "VERIFY_FAILED" : codeOf(error) });
           return report("failed", { errorCode: "ROUTER_UNREACHABLE" });
@@ -317,7 +318,7 @@ export class RouterManager {
             try {
               session = await withTimeout(r.adapter.authenticate(ctx), 70_000, "ROUTER_UNREACHABLE", "login");
             } catch (error) {
-              this.d.log?.warn?.(`[router-agent] login ${r.vendor}: ${String(error?.message ?? error).slice(0, 160)}`);
+              this.d.log?.warn?.(`[router-agent] login ${r.vendor}: ${safeError(error)}`);
               return report("failed", { errorCode: error?.code === "ROUTER_UNREACHABLE" ? "ROUTER_UNREACHABLE" : "ROUTER_AUTH_FAILED" });
             }
             fase("login");
@@ -327,7 +328,7 @@ export class RouterManager {
             // sair do painel nunca pode prender a vez do roteador: tem prazo e, se passar dele, o navegador e encerrado a forca
             if (session) {
               await withTimeout(r.adapter.closeSession(ctx, session), 25_000, "INTERNAL", "sair do painel").catch((error) =>
-                this.d.log?.warn?.(`[router-agent] ${r.vendor}: ${String(error?.message ?? error).slice(0, 120)}`)
+                this.d.log?.warn?.(`[router-agent] ${r.vendor}: ${safeError(error, 120)}`)
               );
             }
             fase("saida");

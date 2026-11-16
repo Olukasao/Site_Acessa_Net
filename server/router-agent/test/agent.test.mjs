@@ -319,3 +319,13 @@ test("dois pedidos para o mesmo roteador nunca tocam nele ao mesmo tempo (consul
   assert.equal(maximo, 1); // nunca dois ao mesmo tempo no mesmo roteador
   assert.equal(feitos.filter(([s]) => s === "completed").length, 3);
 });
+
+test("log nunca leva IP, MAC nem URL do roteador (erro do Playwright vem em varias linhas)", async () => {
+  const { safeError } = await import("../src/safe.mjs");
+  const erro = new Error('page.goto: Timeout 20000ms exceeded.\nCall log:\n  - navigating to "https://100.65.25.222:80/html/amp/wlanbasic/WlanBasic.asp?2G", waiting until "domcontentloaded"');
+  assert.equal(safeError(erro), "page.goto: Timeout 20000ms exceeded.");
+  assert.equal(safeError(new Error("falhou em https://100.65.1.2:80/x com 100.65.1.2:80 e aa:bb:cc:00:11:22")), "falhou em <url> com <ip> e <mac>");
+  assert.equal(safeError("so texto"), "so texto");
+  assert.equal(safeError(null), "erro");
+  assert.equal(safeError(new Error("x".repeat(500)), 50).length, 50);
+});

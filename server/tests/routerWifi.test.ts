@@ -465,6 +465,25 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
     await ctx.app.close();
   });
 
+  it("servidor reiniciou no meio da abertura do chamado: a marca velha de 'abrindo' é retomada (e a recente não)", async () => {
+    const ctx = await setup();
+    const repo = ctx.container.routerWifiJobs;
+    const svc = ctx.container.routerWifiService as unknown as { encryptFallback(p: string): string };
+    const job = await repo.create({ customerId: "customer_A", contractId: "1001", kind: "change_password", bands: ["5GHz"], secretEnc: null, fallbackEnc: svc.encryptFallback("Presa#2026") });
+    await repo.failBySystem(job.id, "AGENT_UNAVAILABLE", new Date());
+    // alguem reservou ha pouco e caiu: ainda nao retoma (pode estar abrindo de verdade)
+    expect(await repo.claimFallback(job.id, new Date(), new Date(Date.now() - 2 * 60_000))).toBe(true);
+    expect(await ctx.container.routerWifiService.sweepFallbacks()).toBe(0);
+    expect(ctx.tickets).toHaveLength(0);
+    // a reserva envelheceu (mais de 2 min): a varredura retoma e abre o chamado
+    await repo.claimFallback(job.id, new Date(Date.now() - 5 * 60_000), new Date(Date.now() + 60_000)); // simula marca velha
+    expect(await ctx.container.routerWifiService.sweepFallbacks()).toBe(1);
+    expect(ctx.tickets).toHaveLength(1);
+    expect(ctx.tickets[0]!.description).toContain("Presa#2026");
+    expect((await repo.findById(job.id))?.ticketProtocol).toBe("261116000001");
+    await ctx.app.close();
+  });
+
   it("sem token de agente as rotas do agente não existem", async () => {
     const { app } = await setup({ agentToken: undefined });
     expect((await app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1" }, remoteAddress: freshIp() })).statusCode).toBe(404);

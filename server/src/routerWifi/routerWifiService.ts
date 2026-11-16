@@ -44,6 +44,8 @@ const CONFIRM_WINDOW_MS = 24 * 60 * 60_000;
 
 /** Dados memorizados para o chamado: so valem por este tempo (depois a senha cifrada e apagada). */
 const FALLBACK_KEEP_MS = 24 * 60 * 60_000;
+/** Quem esta abrindo o chamado ha mais que isto e considerado caido (o servidor reiniciou no meio): outro processo retoma. */
+const OPENING_STALE_MS = 2 * 60_000;
 
 const CHANGE_PER_CUSTOMER = { limit: 3, windowMs: 60 * 60_000 };
 const CHANGE_PER_CONTRACT = { limit: 5, windowMs: 24 * 60 * 60_000 };
@@ -277,7 +279,7 @@ export class RouterWifiService {
     const job = await this.repo.findById(jobId);
     if (!job || job.kind !== "change_password" || job.ticketProtocol || !job.hasFallback || job.customerConfirmation) return;
     if (!isFinalState(job.state) || job.state === "completed" || job.errorCode === "ACCEPTED_NOT_VERIFIED") return;
-    if (!(await this.repo.claimFallback(jobId))) return;
+    if (!(await this.repo.claimFallback(jobId, new Date(), new Date(Date.now() - OPENING_STALE_MS)))) return;
     try {
       const reason = `A troca automática NÃO funcionou (${job.errorCode ?? job.state}). Se algo foi aplicado no roteador, pode ter sido só em parte.`;
       const ticket = await this.hooks.openTicket({ customerId: job.customerId, contractId: job.contractId, description: await this.buildTicketDescription(job, reason) });
@@ -289,8 +291,8 @@ export class RouterWifiService {
 
   /** Varredura periodica: encerra o que parou, abre os chamados que faltam e apaga dados memorizados vencidos. */
   async sweepFallbacks(limit = 20): Promise<number> {
-    await this.expire();
-    const pending = await this.repo.listFallbackPending(new Date(Date.now() - FALLBACK_KEEP_MS), limit);
+    await this.expire(true);
+    const pending = await this.repo.listFallbackPending(new Date(Date.now() - FALLBACK_KEEP_MS), new Date(Date.now() - OPENING_STALE_MS), limit);
     for (const job of pending) await this.ensureFallbackTicket(job.id);
     await this.repo.purgeFallbackBefore(new Date(Date.now() - FALLBACK_KEEP_MS));
     return pending.length;
@@ -315,7 +317,12 @@ export class RouterWifiService {
     return { available: true, agentOnline: await this.agentOnline() };
   }
 
-  private async expire() {
+  private lastExpire = 0;
+
+  /** Encerra o que parou. O acompanhamento da tela pergunta a cada segundo: nos caminhos quentes faz no maximo a cada 5 s. */
+  private async expire(force = false) {
+    if (!force && Date.now() - this.lastExpire < 5000) return;
+    this.lastExpire = Date.now();
     await this.repo.expireStale(new Date(), PENDING_MAX_MS, RUNNING_MAX_MS);
   }
 
@@ -373,14 +380,14 @@ export class RouterWifiService {
       throw new AppError(403, "REAUTH_FAILED", "Senha da Central incorreta.");
     }
 
-    await this.limiter.consume(`router_wifi:change:customer:${input.customerId}`, CHANGE_PER_CUSTOMER);
-    await this.limiter.consume(`router_wifi:change:contract:${input.contractId}`, CHANGE_PER_CONTRACT);
-    await this.limiter.consume(`router_wifi:change:ip:${sha256(input.ip)}`, CHANGE_PER_IP);
-
-    await this.expire();
+    // Ja ha uma troca em andamento: responde isso antes de gastar as cotas (clicar de novo nao pode consumir o limite do cliente)
+    await this.expire(true);
     if (await this.repo.findOpen(input.contractId, "change_password")) {
       throw new AppError(409, "WIFI_CHANGE_IN_PROGRESS", "Já existe uma alteração em andamento. Aguarde terminar.");
     }
+    await this.limiter.consume(`router_wifi:change:customer:${input.customerId}`, CHANGE_PER_CUSTOMER);
+    await this.limiter.consume(`router_wifi:change:contract:${input.contractId}`, CHANGE_PER_CONTRACT);
+    await this.limiter.consume(`router_wifi:change:ip:${sha256(input.ip)}`, CHANGE_PER_IP);
 
     const secretEnc = publicEncrypt(
       { key: this.publicKey!, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
@@ -408,7 +415,7 @@ export class RouterWifiService {
   async claim(agentId: string, max: number, info: { dryRun?: boolean | undefined; version?: string | undefined; waitMs?: number | undefined } = {}) {
     // cada busca de tarefas e o sinal de vida do agente
     await this.repo.touchAgent(agentId, info.dryRun ?? true, info.version ?? null, new Date());
-    await this.expire();
+    await this.expire(true);
     const limit = Math.min(Math.max(1, max), 10);
     let jobs = await this.repo.claim(agentId, limit, new Date());
     // Espera longa: se nao ha tarefa, segura a resposta ate chegar uma (ate waitMs). O agente e avisado na hora, sem esperar o proximo ciclo.

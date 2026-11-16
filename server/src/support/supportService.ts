@@ -129,8 +129,8 @@ export class SupportService {
    */
   async createWifiFollowUpTicket(input: { customerId: string; contractId: string; description: string }): Promise<{ protocol: string }> {
     const contract = await this.ownership.assertContract(input.customerId, input.contractId);
-    const existing = await this.findOpenTicketByContract(input.contractId);
-    if (existing) return { protocol: existing.protocol };
+    // Sempre abre um chamado PROPRIO: reaproveitar um chamado aberto (visita, por exemplo) perderia os dados da troca
+    // (a equipe nunca veria o pedido) e a senha guardada seria apagada. A regra de "um chamado por vez" vale so para a triagem.
     const customer = this.store.getCustomer(input.customerId);
     const contactPhone = normalizeBrazilianPhone(customer?.phone ?? "");
     if (!contactPhone) throw new AppError(422, "INVALID_CONTACT_PHONE", "Nao ha telefone de contato valido no cadastro.");

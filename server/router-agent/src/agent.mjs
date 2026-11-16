@@ -1,3 +1,4 @@
+import { safeError } from "./safe.mjs";
 import { constants, createPrivateKey, privateDecrypt } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { CredentialStore } from "./credentials.mjs";
@@ -105,7 +106,9 @@ export class Agent {
     const { jobs } = resposta;
     for (const job of jobs) {
       this.running++;
-      this.process(job).finally(() => this.running--);
+      this.process(job)
+        .catch((error) => this.log.error?.(`[router-agent] pedido ${job.id.slice(0, 8)}: ${safeError(error)}`))
+        .finally(() => this.running--);
     }
     return jobs.length;
   }
@@ -123,7 +126,7 @@ export class Agent {
       } catch (error) {
         // 409 num andamento = a Central ja encerrou este pedido (expirou, por exemplo): nao mexe mais no roteador
         if (error?.status === 409 && !FINAIS.includes(state)) throw Object.assign(new Error("pedido ja encerrado pela Central"), { code: "JOB_ABORTED" });
-        this.log.warn?.(`[router-agent] relatorio ${job.id}: ${error.message}`);
+        this.log.warn?.(`[router-agent] relatorio ${job.id}: ${safeError(error)}`);
       }
       if (FINAIS.includes(state)) {
         // Log sem senha, sem IP e sem credencial: so a tarefa, o tipo, o resultado e o tempo.
@@ -138,10 +141,10 @@ export class Agent {
         else await report("failed", { errorCode: "INTERNAL" });
       } catch (error) {
         if (error?.code === "JOB_ABORTED") {
-          this.log.warn?.(`[router-agent] ${job.kind} ${job.id}: ${error.message}; roteador nao foi tocado`);
+          this.log.warn?.(`[router-agent] ${job.kind} ${job.id}: ${safeError(error)}; roteador nao foi tocado`);
           return;
         }
-        this.log.error?.(`[router-agent] ${job.id}: ${error?.message ?? error}`);
+        this.log.error?.(`[router-agent] ${job.id}: ${safeError(error)}`);
         await report(job.kind === "change_password" ? "unconfirmed" : "failed", { errorCode: "INTERNAL" });
       } finally {
         this.onTimings?.(job, summarizeTimings(store));
@@ -159,7 +162,7 @@ export class Agent {
         pegou = await this.tick();
       } catch (error) {
         erro = true;
-        this.log.warn?.(`[router-agent] ${error.message}`);
+        this.log.warn?.(`[router-agent] ${safeError(error)}`);
       }
       // Com espera longa a propria Central segura a resposta: volta a perguntar na hora. Sem vaga livre, so descansa um pouco.
       const cheio = this.running >= this.cfg.concurrency;

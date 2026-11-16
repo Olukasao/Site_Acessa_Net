@@ -108,9 +108,9 @@ export interface RouterWifiRepository {
   /** Dados memorizados (cifrados) de uma tarefa. */
   getFallbackEnc(id: string): Promise<string | null>;
   /** Troca de senha que nao funcionou e ainda nao virou chamado (criada nas ultimas 24 h). */
-  listFallbackPending(since: Date, limit: number): Promise<RouterJobRecord[]>;
-  /** Reserva a abertura do chamado de uma tarefa (so um processo consegue). */
-  claimFallback(id: string): Promise<boolean>;
+  listFallbackPending(since: Date, staleOpeningBefore: Date, limit: number): Promise<RouterJobRecord[]>;
+  /** Reserva a abertura do chamado de uma tarefa (so um processo consegue). Uma reserva velha (processo caiu no meio) pode ser retomada. */
+  claimFallback(id: string, now: Date, staleOpeningBefore: Date): Promise<boolean>;
   /** Chamado aberto: guarda o protocolo e apaga os dados memorizados. */
   finishFallback(id: string, protocol: string): Promise<void>;
   /** Nao deu para abrir o chamado agora: libera para tentar de novo (os dados continuam memorizados). */
@@ -321,22 +321,29 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
     return rows[0]?.fallback_enc ?? null;
   }
 
-  async listFallbackPending(since: Date, limit: number) {
+  async listFallbackPending(since: Date, staleOpeningBefore: Date, limit: number) {
     // a troca nao funcionou (falhou, sem suporte ou terminou sem saber se aplicou) e ainda nao virou chamado.
     // "Roteador aceitou" fica de fora: nesse caso quem decide e o cliente ("Conseguiu conectar?").
     const rows = await this.db.all(
       `SELECT ${COLUMNS} FROM router_wifi_jobs
         WHERE kind = 'change_password' AND created_at >= ? AND fallback_enc IS NOT NULL AND ticket_protocol IS NULL
-          AND (fallback_state IS NULL) AND customer_confirmation IS NULL
+          AND (fallback_state IS NULL OR (fallback_state = 'opening' AND updated_at < ?)) AND fallback_tries < 30 AND customer_confirmation IS NULL
           AND (state IN ('failed','unsupported') OR (state = 'unconfirmed' AND (error_code IS NULL OR error_code <> 'ACCEPTED_NOT_VERIFIED')))
         ORDER BY created_at ASC LIMIT ?`,
-      [since.toISOString(), limit]
+      [since.toISOString(), staleOpeningBefore.toISOString(), limit]
     );
     return rows.map(mapRow);
   }
 
-  async claimFallback(id: string) {
-    return (await this.db.run("UPDATE router_wifi_jobs SET fallback_state = 'opening', fallback_tries = fallback_tries + 1 WHERE id = ? AND fallback_state IS NULL AND ticket_protocol IS NULL", [id])) > 0;
+  async claimFallback(id: string, now: Date, staleOpeningBefore: Date) {
+    // "opening" marca quem esta abrindo o chamado; se esse processo caiu (reinicio do servidor), a marca fica velha e outro retoma
+    return (
+      (await this.db.run(
+        `UPDATE router_wifi_jobs SET fallback_state = 'opening', fallback_tries = fallback_tries + 1, updated_at = ?
+          WHERE id = ? AND ticket_protocol IS NULL AND fallback_tries < 30 AND (fallback_state IS NULL OR (fallback_state = 'opening' AND updated_at < ?))`,
+        [now.toISOString(), id, staleOpeningBefore.toISOString()]
+      )) > 0
+    );
   }
 
   async finishFallback(id: string, protocol: string) {

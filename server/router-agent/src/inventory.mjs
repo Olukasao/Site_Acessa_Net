@@ -1,3 +1,4 @@
+import { safeError } from "./safe.mjs";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 /** Hora (0-23) em America/Sao_Paulo. */
@@ -51,7 +52,7 @@ export async function runInventory({ manager, central, contracts, delayMs = 4000
       }
     } catch (error) {
       stats.failed++;
-      log.warn?.(`[inventario] contrato ${String(contractId).length} digitos: ${error?.code ?? error?.message}`);
+      log.warn?.(`[inventario] contrato ${String(contractId).length} digitos: ${error?.code ?? safeError(error, 80)}`);
     }
     if (batch.length >= batchSize) await flush();
     await sleep(delayMs);

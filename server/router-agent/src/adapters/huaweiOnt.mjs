@@ -1,5 +1,6 @@
 import { BaseRouterAdapter } from "./base.mjs";
 import { checkPin } from "../http.mjs";
+import { safeError } from "../safe.mjs";
 import { timed } from "../timing.mjs";
 
 /**
@@ -94,6 +95,16 @@ export async function killBrowser(browser) {
     // ja encerrado
   }
 }
+/** Encerramento do agente: fecha todos os contextos e o navegador compartilhado (nao deixa processo de navegador orfao). */
+export async function shutdownBrowsers() {
+  clearTimeout(idleTimer);
+  await reapBrowsers(0);
+  const promise = sharedBrowser;
+  sharedBrowser = null;
+  const browser = await promise?.catch(() => null);
+  if (browser) await killBrowser(browser);
+}
+
 export async function reapBrowsers(maxAgeMs = MAX_CONTEXT_MS) {
   let reaped = 0;
   for (const [context, info] of [...liveContexts]) {
@@ -231,7 +242,7 @@ export class HuaweiOntAdapter extends BaseRouterAdapter {
           ssids[band] = info.ssid.slice(0, 32);
         } else errors.push(`${band}: pagina sem SSID`);
       } catch (error) {
-        errors.push(`${band}: ${String(error?.message ?? error).split("\n")[0].slice(0, 80)}`);
+        errors.push(`${band}: ${safeError(error, 80)}`);
       }
     }
     return { bands, ssids, errors };
