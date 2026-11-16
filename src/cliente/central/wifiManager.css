@@ -58,3 +58,5 @@
 .wifi-history li.is-completed em { color: #15803d; }
 .wifi-last-password { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: rgba(37, 99, 235, 0.08); }
 .wifi-last-password code { font-size: 16px; font-weight: 700; user-select: all; word-break: break-all; }
+.wifi-forget { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: rgba(217, 119, 6, 0.12); color: #92400e; }
+.wifi-forget p { margin: 4px 0 0; }

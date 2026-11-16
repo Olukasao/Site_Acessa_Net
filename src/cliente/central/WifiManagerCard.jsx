@@ -238,7 +238,16 @@ export default function WifiManagerCard({ contract, embedded = false, onUnavaila
           {change.done ? (change.state === "completed" || change.needsConfirmation || change.fallbackTicket ? <Check size={18} /> : <X size={18} />) : <Loader2 size={18} className="wifi-spin" />}
           <div>
             <strong>{change.message}</strong>
-            {change.state === "completed" && !change.confirmation ? <p>Seus aparelhos vão precisar da nova senha para conectar de novo.</p> : null}
+            {(change.state === "completed" || change.needsConfirmation) && change.confirmation !== "not_connected" ? (
+              <div className="wifi-forget" role="note">
+                <strong>Importante: esqueça a rede nos seus aparelhos</strong>
+                <p>
+                  {change.kind === "change_ssid"
+                    ? "Os nomes mudaram. Nos celulares, TVs e computadores, procure as redes novas e conecte de novo. Apague (esqueça) as redes com o nome antigo para não confundir."
+                    : "Seus aparelhos ainda guardam a senha antiga. Em cada um, toque na rede, escolha “Esquecer rede” e conecte de novo com a nova senha."}
+                </p>
+              </div>
+            ) : null}
             {change.needsConfirmation ? (
               <div className="wifi-confirmation">
                 <p><strong>Conseguiu conectar com a nova senha?</strong></p>
