@@ -56,6 +56,7 @@ import {
 import logo from "../assets/logo-acessanet-3d.png";
 import {
   ClienteApiError,
+  getWifiAvailability,
   changePassword,
   chatRequest,
 	  checkLocalAccess,
@@ -88,7 +89,6 @@ import {
 import NoticeBanner from "./central/NoticeBanner";
 import VisitLocationCard from "./central/VisitLocationCard";
 import WifiManagerCard from "./central/WifiManagerCard";
-import WifiOfferCard from "./central/WifiOfferCard";
 import ToastHost, { showToast } from "./central/Toast";
 import { LocationCaptureField, isNativeApp, submitLocation } from "./central/locationCapture";
 import NetworkIncidentBanner from "./central/NetworkIncidentBanner";
@@ -3241,7 +3241,8 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
               onAnswer={(value) => void handleQuestionAnswer(value)}
               onBack={resetAttendanceFlow}
               selectedCategory={selectedCategory}
-              selectedContractId={selectedContract?.id}
+              selectedContract={selectedContract}
+              onTicketOpened={onRefresh}
               textAnswer={textAnswer}
               onTextAnswerChange={setTextAnswer}
             />
@@ -3795,21 +3796,53 @@ function RouterPasswordRequirements({ value }) {
   );
 }
 
-function AttendanceDetailsStep({ diagnosis, loading, onAnswer, onBack, onTextAnswerChange, selectedCategory, selectedContractId, textAnswer }) {
+function AttendanceDetailsStep({ diagnosis, loading, onAnswer, onBack, onTextAnswerChange, onTicketOpened, selectedCategory, selectedContract, textAnswer }) {
   const question = diagnosis?.question;
   const isRouterPassword = question?.id === "router_password_new";
   const routerPasswordError = isRouterPassword ? validateRouterPasswordClientSide(textAnswer) : "";
 
+  // "Troca de senha do roteador": primeiro a Central tenta trocar sozinha (mesma funcao da aba Internet); se nao der,
+  // ela memoriza os dados e abre o chamado. Se a troca automatica nao serve (modelo, piloto, servico fora), segue o pedido normal.
+  const wantsAuto = selectedCategory?.id === "router_password";
+  const [manual, setManual] = useState(false);
+  const [autoAvailable, setAutoAvailable] = useState(null);
+  useEffect(() => {
+    if (!wantsAuto || !selectedContract?.id) {
+      setAutoAvailable(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    getWifiAvailability(selectedContract.id, controller.signal)
+      .then((r) => setAutoAvailable(r?.available === true && r?.agentOnline === true))
+      .catch(() => setAutoAvailable(false));
+    return () => controller.abort();
+  }, [wantsAuto, selectedContract?.id]);
+  const autoMode = !wantsAuto || manual ? "manual" : autoAvailable === null ? "checking" : autoAvailable ? "auto" : "manual";
+
   return (
     <div className="cliente-attendance-step-panel">
       <SelectedIssueSummary category={selectedCategory} />
-      {selectedCategory?.id === "router_password" ? <WifiOfferCard contractId={selectedContractId} /> : null}
-      {loading && !question ? <LoadingInline label="Preparando perguntas da triagem" /> : null}
-      {diagnosis?.customerMessage ? (
+      {autoMode === "checking" ? <LoadingInline label="Verificando a troca automática" /> : null}
+      {autoMode === "auto" ? (
+        <>
+          <WifiManagerCard contract={selectedContract} embedded onUnavailable={() => setManual(true)} onTicketOpened={onTicketOpened} />
+          <div className="cliente-attendance-actions">
+            <button className="cliente-soft-action" type="button" onClick={onBack}>
+              <ArrowLeft size={17} />
+              Voltar
+            </button>
+            <button className="cliente-soft-action" type="button" onClick={() => setManual(true)}>
+              Prefiro pedir pelo atendimento
+            </button>
+          </div>
+        </>
+      ) : null}
+      {autoMode !== "auto" && loading && !question ? <LoadingInline label="Preparando perguntas da triagem" /> : null}
+      {autoMode === "manual" && diagnosis?.customerMessage ? (
         <InlineNotice tone="info" title="Triagem AcessaNet" message={diagnosis.customerMessage} />
       ) : null}
 
-      {question ? (
+      {autoMode === "manual" && question ? (
         <div className="cliente-attendance-question">
           <label>{question.text || "Conte mais detalhes"}</label>
           {question.helperText ? <p>{question.helperText}</p> : null}

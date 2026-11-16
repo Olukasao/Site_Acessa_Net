@@ -67,7 +67,7 @@ function PasswordInput({ id, value, onChange, autoComplete, placeholder }) {
   );
 }
 
-export default function WifiManagerCard({ contract }) {
+export default function WifiManagerCard({ contract, embedded = false, onUnavailable, onTicketOpened }) {
   const contractId = contract?.id;
   const [status, setStatus] = useState(null); // { available, job }
   const statusJob = useJobPolling(status?.job ?? null);
@@ -92,6 +92,22 @@ export default function WifiManagerCard({ contract }) {
     getWifiStatus(contractId, controller.signal).then(setStatus).catch(() => setStatus({ available: false, job: null }));
     return () => controller.abort();
   }, [contractId]);
+
+  // No fluxo de atendimento ("Troca de senha do roteador"): se a troca automatica nao serve para este roteador/momento,
+  // avisa a tela para seguir com o pedido normal de chamado.
+  useEffect(() => {
+    if (!embedded || !onUnavailable || status === null || change) return;
+    const semServico = !status.available || status.agentOnline === false;
+    const leituraTerminou = statusJob?.done === true;
+    const naoTroca = leituraTerminou && !(statusJob.state === "completed" && statusJob.result?.canChangePassword === true);
+    if (semServico || naoTroca) onUnavailable();
+  }, [embedded, onUnavailable, status, statusJob, change]);
+
+  // O chamado da troca que nao funcionou (ou do "nao consegui conectar") foi aberto: a tela de chamados atualiza.
+  const openedProtocol = change?.ticketProtocol ?? null;
+  useEffect(() => {
+    if (openedProtocol) onTicketOpened?.();
+  }, [openedProtocol, onTicketOpened]);
 
   if (!status?.available) return null;
   if (status.agentOnline === false && !change) {
@@ -193,7 +209,7 @@ export default function WifiManagerCard({ contract }) {
         </div>
       ) : null}
 
-      {info && !canChange && !change ? (
+      {info && !canChange && !change && !embedded ? (
         <p className="wifi-muted">
           A troca automática ainda não está disponível para o seu roteador.{" "}
           <Link to="/cliente/atendimento?categoria=router_password">Peça a troca pelo atendimento</Link>.
