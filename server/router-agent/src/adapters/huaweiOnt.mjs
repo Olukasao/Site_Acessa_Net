@@ -31,7 +31,7 @@ export function parseProductName(html) {
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
 /** Espera uma promessa por no maximo `ms` (sem lancar): usada para sair do painel sem nunca travar. */
-const bound = (promise, ms) => Promise.race([Promise.resolve(promise).catch(() => undefined), new Promise((resolve) => setTimeout(resolve, ms))]);
+export const bound = (promise, ms) => Promise.race([Promise.resolve(promise).catch(() => undefined), new Promise((resolve) => setTimeout(resolve, ms))]);
 
 /**
  * Um navegador (processo) compartilhado entre os pedidos, aberto sob demanda e fechado depois de um tempo parado; cada pedido usa um
@@ -41,11 +41,11 @@ const bound = (promise, ms) => Promise.race([Promise.resolve(promise).catch(() =
  */
 let sharedBrowser = null; // Promise<Browser>
 let lastBrowserActivity = Date.now();
-const liveContexts = new Map(); // context -> { browser, since }
+export const liveContexts = new Map(); // context -> { browser, since }
 const MAX_CONTEXT_MS = 4 * 60_000;
 const BROWSER_IDLE_MS = 90_000;
 
-async function acquireBrowser(launch, options) {
+export async function acquireBrowser(launch, options) {
   touchBrowserActivity();
   if (sharedBrowser) {
     const existing = await sharedBrowser.catch(() => null);
@@ -82,13 +82,15 @@ async function closeIdleBrowser(idleMs) {
   return Boolean(browser);
 }
 
-const liveSessions = new Map(); // context -> { page, origin }  (para sair do painel antes de encerrar um navegador)
+export const liveSessions = new Map(); // context -> { page, origin }  (para sair do painel antes de encerrar um navegador)
 
 /**
  * Sai do painel do roteador pelo proprio painel (logout), com prazo. Devolve true se o painel recebeu o pedido de sair.
  * `abrirInicio`: se a pagina atual nao tem a funcao de sair, abre a pagina inicial (que tem) e tenta de novo.
  */
 async function logoutPanel(session, { abrirInicio = false } = {}) {
+  // outro fabricante (ex.: TP-Link) traz o proprio jeito de sair
+  if (typeof session.logout === "function") return (await bound(session.logout(abrirInicio), 10_000)) === true;
   const { page, origin } = session;
   if (abrirInicio) await bound(page.goto(`${origin}/index.asp`, { waitUntil: "domcontentloaded", timeout: 8000 }), 10_000);
   const chamou = await bound(
@@ -101,7 +103,7 @@ async function logoutPanel(session, { abrirInicio = false } = {}) {
   return chamou === true;
 }
 
-async function closeContext(context) {
+export async function closeContext(context) {
   liveSessions.delete(context);
   const info = liveContexts.get(context);
   liveContexts.delete(context);

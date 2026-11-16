@@ -81,7 +81,7 @@ test("cofre de credenciais: cifrado, arquivo 600, chave errada não abre", () =>
 const fakeSgp = (over = {}) => ({
   verificaAcesso: async (c) => (c === "1001" ? { online: true, serviceId: "77", login: "x" } : null),
   connectionStatus: async () => ({ online: true, ip: "100.64.10.20", mac: "aa:bb:cc:00:11:22", nas: "10.0.0.1", uptime: "1d" }),
-  equipmentType: async () => ({ found: true, label: "Fibra - ROTEADOR - TP LINK", vendor: "tplink" }),
+  equipmentType: async () => ({ found: true, label: "Fibra - ROTEADOR - MERCUSYS", vendor: "mercusys" }),
   ...over
 });
 function managerWith(over = {}) {
@@ -107,7 +107,7 @@ test("modelo não validado: lê o SGP, não entra no roteador e responde 'em val
   await managerWith().status({ contractId: "1001", kind: "status" }, report);
   assert.equal(states.at(-1).state, "completed");
   assert.equal(states.at(-1).result.management, "requires_validation");
-  assert.equal(states.at(-1).result.vendor, "TP-Link");
+  assert.equal(states.at(-1).result.vendor, "Mercusys");
   const ch = recorder();
   await managerWith().changePassword({ contractId: "1001", kind: "change_password", bands: ["5GHz"], secretEnc: "x" }, ch.report);
   assert.deepEqual(ch.states.at(-1), { state: "unsupported", errorCode: "ROUTER_REQUIRES_VALIDATION" });
@@ -240,7 +240,7 @@ test("inventário de um contrato: offline, certificado de fabricante novo e fabr
   assert.equal(await managerWith({ sgp: { verificaAcesso: async () => null } }).inventoryOne("9"), null);
   // fabricante do SGP sem pin configurado: fica "em validacao" (nao entra no roteador)
   const known = await managerWith().inventoryOne("1001");
-  assert.deepEqual(known, { contractId: "1001", vendor: "tplink", model: null, management: "requires_validation" });
+  assert.deepEqual(known, { contractId: "1001", vendor: "mercusys", model: null, management: "requires_validation" });
   // roteador do cliente
   const own = await managerWith({ sgp: { equipmentType: async () => ({ found: true, label: "PARTICULAR", vendor: "customer_owned" }) } }).inventoryOne("1001");
   assert.equal(own.management, "unsupported");
@@ -448,4 +448,22 @@ test("troca de nome: confere a regra ANTES de tocar no roteador, troca as duas r
   await m.changeWifi({ contractId: "1001", kind: "change_ssid", bands: ["2.4GHz", "5GHz"], params: { names: { "2.4GHz": "Casa 2.4", "5GHz": "Outra 5G" } } }, ruim.report);
   assert.deepEqual(ruim.states.at(-1), { state: "failed", errorCode: "INTERNAL" });
   assert.equal(tocou, 0);
+});
+
+test("TP-Link XX230v: modelo vem da pagina de login e a rede unica usa so o nome-base", async () => {
+  const { parseTplinkModel, singleNetworkName, TplinkXx230Adapter } = await import("../src/adapters/tplinkXx230.mjs");
+  assert.equal(parseTplinkModel('<script>var x; modelName="XX230v"; </script>'), "XX230v");
+  assert.equal(parseTplinkModel("<html></html>"), null);
+  assert.equal(singleNetworkName({ "2.4GHz": "Casa da Ana 2.4", "5GHz": "Casa da Ana 5G" }), "Casa da Ana");
+  assert.equal(singleNetworkName({ "2.4GHz": "Pedro-5g 2.4", "5GHz": "Pedro-5g 5G" }), "Pedro-5g");
+  const a = new TplinkXx230Adapter({ browserPath: "/x" });
+  assert.equal(a.supportsModel("XX230v"), true);
+  assert.equal(a.supportsModel("Archer C6"), false);
+  assert.deepEqual(a.quickStatus("XX230v"), { bands: ["2.4GHz", "5GHz"] });
+  assert.equal(a.quickStatus("outro"), null);
+  const html = '<title>x</title> tp-link <script>modelName="XX230v"</script>';
+  const id = await a.identify({ http: { request: async () => ({ status: 200, text: async () => html }) } });
+  assert.deepEqual({ v: id.vendor, m: id.model }, { v: "tplink", m: "XX230v" });
+  const outro = await a.identify({ http: { request: async () => ({ status: 200, text: async () => "<html>hello</html>" }) } });
+  assert.equal(outro.vendor, null);
 });

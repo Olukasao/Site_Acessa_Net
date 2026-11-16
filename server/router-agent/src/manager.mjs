@@ -161,11 +161,14 @@ export class RouterManager {
   async detectVendor(ip) {
     for (const adapter of allAdapters()) {
       const ep = this.d.endpoints[adapter.vendor];
-      if (adapter.support !== "supported" || !ep?.pins?.length) continue;
+      // HTTPS precisa do certificado fixado (pins); HTTP puro (TP-Link) se reconhece so pela pagina de login
+      if (adapter.support !== "supported" || (ep?.protocol !== "http" && !ep?.pins?.length)) continue;
       const baseUrl = routerBaseUrl(ip, adapter.vendor, this.d.endpoints, this.d.cidrs);
       if (!baseUrl) continue;
-      const pin = await checkPin(baseUrl, ep.pins, this.d.routerTimeoutMs);
-      if (!pin.ok) continue;
+      if (ep.protocol !== "http") {
+        const pin = await checkPin(baseUrl, ep.pins, this.d.routerTimeoutMs);
+        if (!pin.ok) continue;
+      }
       const id = await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins: ep.pins }) }).catch(() => null);
       if (id?.vendor === adapter.vendor) return { vendor: adapter.vendor, model: id.model ?? null };
     }
@@ -194,7 +197,7 @@ export class RouterManager {
       const adapter = adapterFor(vendor);
       const baseUrl = routerBaseUrl(conn.ip, vendor, this.d.endpoints, this.d.cidrs);
       const pins = this.d.endpoints[vendor]?.pins ?? [];
-      if (adapter?.support === "supported" && baseUrl && pins.length) {
+      if (adapter?.support === "supported" && baseUrl && (pins.length || this.d.endpoints[vendor]?.protocol === "http")) {
         const id = await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins }) }).catch(() => null);
         if (id?.model) return entry(adapter.supportsModel?.(id.model) === false ? "requires_validation" : "available", { vendor, model: id.model });
       }

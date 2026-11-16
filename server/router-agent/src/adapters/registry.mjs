@@ -1,5 +1,6 @@
 import { PendingValidationAdapter } from "./base.mjs";
 import { HuaweiOntAdapter } from "./huaweiOnt.mjs";
+import { TplinkXx230Adapter } from "./tplinkXx230.mjs";
 
 // O que falta para cada fabricante virar "supported". Preencher a partir de um roteador de bancada
 // (modelo e firmware exatos), olhando o painel no navegador com as ferramentas de desenvolvedor.
@@ -11,7 +12,8 @@ const COMMON = [
 ];
 
 const ADAPTERS = {
-  tplink: new PendingValidationAdapter("tplink", [...COMMON, "painel pede so a senha (sem usuario): confirmar o formato do envio (alguns firmwares cifram a senha no navegador)"]),
+  // TP-Link: validado o XX230v (HTTP, porta 80, Band Steering ligado); outros modelos ficam "em validacao"
+  tplink: new TplinkXx230Adapter(),
   // Huawei: validado o EG8145V5-V2; outros modelos Huawei ficam "em validacao" (supportsModel)
   huawei: new HuaweiOntAdapter(),
   stavix: new PendingValidationAdapter("stavix", [...COMMON, "o SGP nao tem 'Stavix' no Tipo equipamento: definir como identificar (cadastro no SGP ou leitura do proprio roteador)"]),
