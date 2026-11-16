@@ -129,6 +129,8 @@ export interface AppConfig {
     agentToken: string | undefined;
     agentPublicKey: string | undefined;
     pilotContracts: string[];
+    /** Contratos de teste (suporte): sem limite de tentativas, mesmo com a funcao aberta a todos. */
+    testContracts: string[];
   };
   wifi: {
     /** Segredo compartilhado com o radius-bridge. Vazio = rota de autorizacao desligada. */
@@ -420,7 +422,8 @@ export function loadConfig(overrides: AppConfigOverrides = {}): AppConfig {
       enabled: ["1", "true", "yes", "on"].includes(String(process.env.ROUTER_WIFI_ENABLED ?? "").toLowerCase()),
       agentToken: unwrapEnv(process.env.ROUTER_AGENT_TOKEN),
       agentPublicKey: unwrapEnv(process.env.ROUTER_AGENT_PUBLIC_KEY),
-      pilotContracts: parseCsv(process.env.ROUTER_WIFI_PILOT_CONTRACTS ?? "")
+      pilotContracts: parseCsv(process.env.ROUTER_WIFI_PILOT_CONTRACTS ?? ""),
+      testContracts: parseCsv(process.env.ROUTER_WIFI_TEST_CONTRACTS ?? "")
     },
     wifi: {
       radiusToken: unwrapEnv(process.env.WIFI_RADIUS_TOKEN),

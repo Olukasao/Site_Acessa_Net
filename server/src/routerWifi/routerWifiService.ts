@@ -28,6 +28,7 @@ export interface RouterWifiConfig {
   agentPublicKey: string | undefined;
   /** Piloto: so estes contratos podem usar (vazio = todos, quando ligado). */
   pilotContracts: string[];
+  testContracts?: string[];
 }
 
 export const WIFI_BANDS: WifiBand[] = ["2.4GHz", "5GHz"];
@@ -351,7 +352,7 @@ export class RouterWifiService {
 
   /** Contrato de teste do piloto (lista explicita): sem limite de tentativas, para o suporte testar a vontade. */
   private isTestContract(contractId: string) {
-    return this.config.pilotContracts.length > 0 && this.config.pilotContracts.includes(contractId);
+    return (this.config.testContracts ?? []).includes(contractId) || (this.config.pilotContracts.length > 0 && this.config.pilotContracts.includes(contractId));
   }
   private async consume(contractId: string, key: string, cfg: { limit: number; windowMs: number }) {
     if (this.isTestContract(contractId)) return;
