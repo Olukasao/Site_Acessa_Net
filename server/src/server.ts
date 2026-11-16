@@ -50,6 +50,7 @@ async function start() {
     app.log.info(`site-acessanet-server ouvindo na porta ${container.config.port}`);
     startPushNotifier(container, app.log);
     startCrashRetention(container, app.log);
+    startRouterWifiSweeper(container, app.log);
     setAppointmentSourceLogger(app.log);
   } catch (error) {
     app.log.error(error);
@@ -119,4 +120,18 @@ function startCrashRetention(container: ReturnType<typeof createContainer>, log:
   };
   setTimeout(purge, 60_000).unref();
   setInterval(purge, 24 * 60 * 60 * 1000).unref();
+}
+
+/**
+ * Gerenciar meu Wi-Fi: a cada minuto encerra o que parou (agente caiu), abre o chamado das trocas que nao funcionaram
+ * (com os dados memorizados) e apaga os dados memorizados vencidos. Desligado junto com a funcao.
+ */
+function startRouterWifiSweeper(container: ReturnType<typeof createContainer>, log: { info: (o: Record<string, unknown>, m?: string) => void; warn: (o: Record<string, unknown>, m?: string) => void }) {
+  if (!container.config.routerWifi.enabled) return;
+  const run = () =>
+    void container.routerWifiService
+      .sweepFallbacks()
+      .then((opened) => opened && log.info({ tag: "ROUTER_WIFI", pending: opened }, "[ROUTER_WIFI] chamados de troca que nao funcionou tratados"))
+      .catch((error) => log.warn({ tag: "ROUTER_WIFI", error: error instanceof Error ? error.message : "erro" }, "[ROUTER_WIFI] varredura falhou"));
+  setInterval(run, 60_000).unref();
 }

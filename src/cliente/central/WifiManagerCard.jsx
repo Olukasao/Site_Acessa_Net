@@ -171,8 +171,8 @@ export default function WifiManagerCard({ contract }) {
       ) : null}
 
       {change ? (
-        <div className={`wifi-result ${change.done ? `is-${change.needsConfirmation ? "pending" : change.state}` : ""}`} role="status" aria-live="polite">
-          {change.done ? (change.state === "completed" || change.needsConfirmation ? <Check size={18} /> : <X size={18} />) : <Loader2 size={18} className="wifi-spin" />}
+        <div className={`wifi-result ${change.done ? `is-${change.needsConfirmation || change.fallbackTicket ? "pending" : change.state}` : ""}`} role="status" aria-live="polite">
+          {change.done ? (change.state === "completed" || change.needsConfirmation || change.fallbackTicket ? <Check size={18} /> : <X size={18} />) : <Loader2 size={18} className="wifi-spin" />}
           <div>
             <strong>{change.message}</strong>
             {change.state === "completed" && !change.confirmation ? <p>Seus aparelhos vão precisar da nova senha para conectar de novo.</p> : null}
@@ -187,7 +187,8 @@ export default function WifiManagerCard({ contract }) {
               </div>
             ) : null}
             {change.confirmation === "not_connected" && !change.ticketProtocol ? <p><Link to="/cliente/atendimento?categoria=router_password">Abrir atendimento para ajustar a senha</Link></p> : null}
-            {change.done && change.state !== "completed" && !change.needsConfirmation && !change.confirmation ? <p><Link to="/cliente/atendimento?categoria=router_password">Abrir atendimento para trocar a senha</Link></p> : null}
+            {change.fallbackTicket ? <p>Você não precisa fazer mais nada: nossa equipe troca a senha e entra em contato. Acompanhe pelo chamado.</p> : null}
+            {change.done && change.state !== "completed" && !change.needsConfirmation && !change.confirmation && !change.fallbackTicket ? <p><Link to="/cliente/atendimento?categoria=router_password">Abrir atendimento para trocar a senha</Link></p> : null}
           </div>
         </div>
       ) : null}

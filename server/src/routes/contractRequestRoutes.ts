@@ -365,6 +365,25 @@ export async function registerContractRequestRoutes(app: FastifyInstance, contai
     });
   }
 
+  if (feedToken) {
+    // Trocas de senha do Wi-Fi pela Central, para a equipe ser avisada no Workspace (mesmo token do feed acima).
+    // Traz o nome do cliente (sem CPF/contato/IP) e o que a equipe precisa: quem, qual roteador, quais redes e se houve problema.
+    app.get("/api/integracoes/wifi/trocas", async (request, reply) => {
+      const header = request.headers.authorization;
+      const provided = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : "";
+      if (!provided || !safeEqual(provided, feedToken)) {
+        throw new AppError(401, "FEED_TOKEN_REQUIRED", "Token ausente ou inválido.");
+      }
+      const query = request.query as { desde?: string };
+      const parsed = Date.parse(query.desde ?? "");
+      const since = Number.isFinite(parsed) ? new Date(Math.max(parsed, Date.now() - 7 * 86400000)) : new Date(Date.now() - 86400000);
+      reply.header("Cache-Control", "no-store");
+      const rows = await container.routerWifiService.staffFeed(since);
+      const names = await container.centralActivityService.findCustomerNames([...new Set(rows.map((row) => row.customerId))]);
+      return { items: rows.map(({ customerId, ...row }) => ({ ...row, customerName: names.get(customerId) ?? null })) };
+    });
+  }
+
   app.get("/admin/api/contratacoes/summary", async (request) => {
     requireAdminPermission(request, "contratacoes.read");
     return { newCount: await container.contractRequests.countNew() };

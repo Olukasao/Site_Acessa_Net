@@ -6,6 +6,7 @@ import { hashPassword, sha256 } from "../src/security/hash.js";
 import { validateWifiPassword } from "../src/routerWifi/routerWifiService.js";
 
 const TOKEN = "agent_token_" + "t".repeat(40);
+const FEED_TOKEN = "feed_token_" + "f".repeat(40);
 const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const PUBLIC_PEM = publicKey.export({ type: "spki", format: "pem" }).toString();
 let ip = 0;
@@ -14,7 +15,8 @@ const freshIp = () => `10.9.${Math.floor(++ip / 250)}.${(ip % 250) + 1}`;
 async function setup(over: Partial<{ enabled: boolean; pilotContracts: string[]; agentToken: string | undefined }> = {}) {
   const container = createContainer({
     env: "test", sqlitePath: ":memory:", sgp: { enabled: true, baseUrl: "http://sgp.invalid", basicUsername: "t", basicPassword: "t", chamado: {}, sign: {} },
-    routerWifi: { enabled: true, agentToken: TOKEN, agentPublicKey: PUBLIC_PEM, pilotContracts: [], ...over }
+    routerWifi: { enabled: true, agentToken: TOKEN, agentPublicKey: PUBLIC_PEM, pilotContracts: [], ...over },
+    contractFeed: { token: FEED_TOKEN }
   } as never);
   vi.spyOn(container.sgpClient, "consultCustomerByContract").mockRejectedValue(new Error("sem rede nos testes"));
   const app = await buildApp(container);
@@ -244,7 +246,7 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
     await ctx.app.close();
   });
 
-  it("'Não conectou' abre o chamado com o histórico, sem a senha, e guarda o protocolo", async () => {
+  it("'Não conectou' abre o chamado com os dados memorizados (redes, roteador e a senha escolhida) e guarda o protocolo", async () => {
     const ctx = await setup();
     const jobId = await changeAccepted(ctx);
     const no = await ctx.app.inject({ method: "POST", url: `/api/customer/wifi/jobs/${jobId}/confirm`, headers: { authorization: ctx.auth }, payload: { connected: false }, remoteAddress: freshIp() });
@@ -253,8 +255,12 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
     expect(no.json().job.message).toContain("261116000001");
     expect(ctx.tickets).toHaveLength(1);
     expect(ctx.tickets[0]!.contractId).toBe("1001");
-    expect(ctx.tickets[0]!.description).toMatch(/NAO conseguiu conectar/);
-    expect(ctx.tickets[0]!.description).not.toContain("Casa-Nova");
+    expect(ctx.tickets[0]!.description).toMatch(/NÃO conseguiu conectar/);
+    // dados memorizados para o tecnico trocar no roteador: redes, roteador e a senha que o cliente escolheu
+    expect(ctx.tickets[0]!.description).toContain("Nova senha escolhida pelo cliente: Casa-Nova#2026");
+    expect(ctx.tickets[0]!.description).toContain("Huawei EG8145V5-V2");
+    // depois do chamado aberto a senha memorizada e apagada
+    expect(await ctx.container.routerWifiJobs.getFallbackEnc(jobId)).toBeNull();
     await ctx.app.close();
   });
 
@@ -304,6 +310,134 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
       // nada de senha, ip ou id interno do cliente na resposta do painel
       expect(JSON.stringify(r.json())).not.toMatch(/customer_A|secretEnc|Casa-Nova/);
     }
+    await ctx.app.close();
+  });
+
+  it("aviso da equipe: feed com token traz a troca aceita e a resposta do cliente, sem senha, IP nem id interno", async () => {
+    const ctx = await setup();
+    const feed = (headers: Record<string, string> = { authorization: `Bearer ${FEED_TOKEN}` }) =>
+      ctx.app.inject({ method: "GET", url: "/api/integracoes/wifi/trocas", headers, remoteAddress: freshIp() });
+    expect((await feed({})).statusCode).toBe(401);
+    expect((await feed({ authorization: "Bearer errado" })).statusCode).toBe(401);
+    expect((await feed()).json().items).toEqual([]);
+
+    const jobId = await changeAccepted(ctx);
+    const first = (await feed()).json().items;
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({ id: jobId, contractId: "1001", bands: ["2.4GHz", "5GHz"], vendor: "Huawei", model: "EG8145V5-V2", state: "unconfirmed", confirmation: null });
+    await ctx.app.inject({ method: "POST", url: `/api/customer/wifi/jobs/${jobId}/confirm`, headers: { authorization: ctx.auth }, payload: { connected: false }, remoteAddress: freshIp() });
+    const after = (await feed()).json().items[0];
+    expect(after).toMatchObject({ confirmation: "not_connected", ticketProtocol: "261116000001" });
+    expect(after).not.toHaveProperty("customerId"); // so o nome; o id interno do cliente nao sai
+    expect(after.customerName).toBe("customer_A"); // (no teste o nome cadastrado e esse texto)
+    expect(JSON.stringify(after)).not.toMatch(/secretEnc|Casa-Nova|100\.64/);
+    await ctx.app.close();
+  });
+
+
+  async function failedAttempt(ctx: Awaited<ReturnType<typeof setup>>, state: string, errorCode: string) {
+    const { app, auth } = ctx;
+    const jobId = (await app.inject({ method: "POST", url: "/api/customer/wifi/password", headers: { authorization: auth }, payload: change(), remoteAddress: freshIp() })).json().job.id as string;
+    await app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1" }, remoteAddress: freshIp() });
+    await app.inject({ method: "POST", url: `/api/internal/router-agent/jobs/${jobId}`, headers: agent, payload: { agentId: "a1", state, errorCode }, remoteAddress: freshIp() });
+    await new Promise((r) => setTimeout(r, 40));
+    return jobId;
+  }
+
+  it("troca que não funcionou: memoriza os dados e abre o chamado sozinho, uma vez", async () => {
+    const ctx = await setup();
+    const jobId = await failedAttempt(ctx, "failed", "ROUTER_UNREACHABLE");
+    expect(ctx.tickets).toHaveLength(1);
+    expect(ctx.tickets[0]!.contractId).toBe("1001");
+    expect(ctx.tickets[0]!.description).toMatch(/NÃO funcionou \(ROUTER_UNREACHABLE\)/);
+    expect(ctx.tickets[0]!.description).toContain("2.4 GHz e 5 GHz");
+    expect(ctx.tickets[0]!.description).toContain("Nova senha escolhida pelo cliente: Casa-Nova#2026");
+    const seen = (await ctx.app.inject({ method: "GET", url: `/api/customer/wifi/jobs/${jobId}`, headers: { authorization: ctx.auth }, remoteAddress: freshIp() })).json().job;
+    expect(seen).toMatchObject({ state: "failed", fallbackTicket: true, ticketProtocol: "261116000001" });
+    expect(seen.message).toContain("Abrimos o chamado 261116000001");
+    // a senha memorizada some quando o chamado abre; e olhar de novo nao abre outro
+    expect(await ctx.container.routerWifiJobs.getFallbackEnc(jobId)).toBeNull();
+    await ctx.app.inject({ method: "GET", url: `/api/customer/wifi/jobs/${jobId}`, headers: { authorization: ctx.auth }, remoteAddress: freshIp() });
+    expect(await ctx.container.routerWifiService.sweepFallbacks()).toBe(0);
+    expect(ctx.tickets).toHaveLength(1);
+    // o texto cifrado no banco nao e a senha em claro
+    await ctx.app.close();
+  });
+
+  it("sem suporte (modelo em validação) e 'não confirmado' por erro também viram chamado; 'roteador aceitou' não", async () => {
+    const ctx = await setup();
+    await failedAttempt(ctx, "unsupported", "ROUTER_REQUIRES_VALIDATION");
+    expect(ctx.tickets).toHaveLength(1);
+    const ctx2 = await setup();
+    await failedAttempt(ctx2, "unconfirmed", "INTERNAL");
+    expect(ctx2.tickets).toHaveLength(1);
+    const ctx3 = await setup();
+    await changeAccepted(ctx3); // aceito pelo roteador: quem decide e o cliente
+    expect(ctx3.tickets).toHaveLength(0);
+    // ...e a senha continua memorizada ate o cliente responder (ou 24 h)
+    const [row] = await ctx3.container.routerWifiJobs.list(1);
+    expect(await ctx3.container.routerWifiJobs.getFallbackEnc(row!.id)).not.toBeNull();
+    await ctx.app.close();
+    await ctx2.app.close();
+    await ctx3.app.close();
+  });
+
+  it("concluído com confirmação do cliente apaga a senha memorizada e não abre chamado", async () => {
+    const ctx = await setup();
+    const jobId = await changeAccepted(ctx);
+    await ctx.app.inject({ method: "POST", url: `/api/customer/wifi/jobs/${jobId}/confirm`, headers: { authorization: ctx.auth }, payload: { connected: true }, remoteAddress: freshIp() });
+    expect(await ctx.container.routerWifiJobs.getFallbackEnc(jobId)).toBeNull();
+    expect(ctx.tickets).toHaveLength(0);
+    // verificado pelo agente: tambem apaga
+    const j2 = (await ctx.app.inject({ method: "POST", url: "/api/customer/wifi/password", headers: { authorization: ctx.auth }, payload: change(), remoteAddress: freshIp() })).json().job.id;
+    await ctx.app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1" }, remoteAddress: freshIp() });
+    await ctx.app.inject({ method: "POST", url: `/api/internal/router-agent/jobs/${j2}`, headers: agent, payload: { agentId: "a1", state: "completed", result: { bands: ["5GHz"], verified: true } }, remoteAddress: freshIp() });
+    expect(await ctx.container.routerWifiJobs.getFallbackEnc(j2)).toBeNull();
+    expect(ctx.tickets).toHaveLength(0);
+    await ctx.app.close();
+  });
+
+  it("se o chamado não abrir agora (SGP fora), os dados ficam memorizados e a varredura abre depois", async () => {
+    const ctx = await setup();
+    let falhar = true;
+    const tickets: string[] = [];
+    (ctx.container.routerWifiService as unknown as { hooks: unknown }).hooks = {
+      openTicket: async (input: { description: string }) => {
+        if (falhar) throw new Error("SGP fora");
+        tickets.push(input.description);
+        return { protocol: "261116000002" };
+      },
+      notifyChanged: async () => undefined
+    };
+    const jobId = await failedAttempt(ctx, "failed", "ROUTER_AUTH_FAILED");
+    expect(tickets).toHaveLength(0);
+    const waiting = (await ctx.app.inject({ method: "GET", url: `/api/customer/wifi/jobs/${jobId}`, headers: { authorization: ctx.auth }, remoteAddress: freshIp() })).json().job;
+    expect(waiting.ticketProtocol).toBeNull();
+    expect(waiting.message).toContain("estamos abrindo o chamado");
+    expect(await ctx.container.routerWifiJobs.getFallbackEnc(jobId)).not.toBeNull();
+    falhar = false;
+    expect(await ctx.container.routerWifiService.sweepFallbacks()).toBeGreaterThanOrEqual(1);
+    expect(tickets).toHaveLength(1);
+    expect(tickets[0]).toContain("Casa-Nova#2026");
+    expect((await ctx.container.routerWifiJobs.findById(jobId))?.ticketProtocol).toBe("261116000002");
+    await ctx.app.close();
+  });
+
+  it("agente que sumiu no meio: a varredura encerra e abre o chamado; dados vencidos são apagados", async () => {
+    const ctx = await setup();
+    const repo = ctx.container.routerWifiJobs;
+    const old = new Date(Date.now() - 10 * 60_000);
+    const stuck = await repo.create({ customerId: "customer_A", contractId: "1001", kind: "change_password", bands: ["5GHz"], secretEnc: "x", fallbackEnc: (ctx.container.routerWifiService as unknown as { encryptFallback(p: string): string }).encryptFallback("Parada#2026"), now: old });
+    await repo.claim("a1", 5, old);
+    await ctx.container.routerWifiService.sweepFallbacks();
+    expect(await repo.findById(stuck.id)).toMatchObject({ state: "unconfirmed", errorCode: "AGENT_TIMEOUT" });
+    expect(ctx.tickets).toHaveLength(1);
+    expect(ctx.tickets[0]!.description).toContain("Parada#2026");
+    // dados memorizados vencidos (mais de 24 h) sao apagados
+    const velho = await repo.create({ customerId: "customer_A", contractId: "1001", kind: "change_password", bands: ["5GHz"], secretEnc: null, fallbackEnc: "lixo", now: new Date(Date.now() - 30 * 3600_000) });
+    await repo.failBySystem(velho.id, "AGENT_UNAVAILABLE", new Date());
+    await ctx.container.routerWifiService.sweepFallbacks();
+    expect(await repo.getFallbackEnc(velho.id)).toBeNull();
     await ctx.app.close();
   });
 

@@ -326,6 +326,8 @@ export async function buildApp(container: AppContainer = createContainer()) {
       "GET /api/integracoes/contratacoes/pendentes",
       /** Avaliacoes respondidas por protocolo, para o painel de atendimento dos tecnicos da Agenda (mesmo token do feed acima). */
       "GET /api/integracoes/avaliacoes",
+      /** Trocas de senha do Wi-Fi para o aviso da equipe no Workspace (mesmo token do feed de contratacoes). */
+      "GET /api/integracoes/wifi/trocas",
       "GET /api/integracoes/marketing/resumo",
       /** Chamados abertos pelo site, para a aba Chamados do Workspace (mesmo token do resumo acima). */
       "GET /api/integracoes/marketing/chamados",

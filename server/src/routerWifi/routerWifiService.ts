@@ -1,4 +1,4 @@
-import { constants, createPublicKey, publicEncrypt, type KeyObject } from "node:crypto";
+import { constants, createCipheriv, createDecipheriv, createPublicKey, hkdfSync, publicEncrypt, randomBytes, type KeyObject } from "node:crypto";
 import { z } from "zod";
 import { AppError } from "../errors.js";
 import type { PersistentRateLimiter } from "../auth/persistentRateLimiter.js";
@@ -41,6 +41,9 @@ const STATUS_FRESH_MS = 5 * 60_000;
 const AGENT_ONLINE_MS = 45_000;
 /** Quanto tempo o cliente tem para responder "Conseguiu conectar?". */
 const CONFIRM_WINDOW_MS = 24 * 60 * 60_000;
+
+/** Dados memorizados para o chamado: so valem por este tempo (depois a senha cifrada e apagada). */
+const FALLBACK_KEEP_MS = 24 * 60 * 60_000;
 
 const CHANGE_PER_CUSTOMER = { limit: 3, windowMs: 60 * 60_000 };
 const CHANGE_PER_CONTRACT = { limit: 5, windowMs: 24 * 60 * 60_000 };
@@ -130,6 +133,8 @@ export interface PublicRouterJob {
   needsConfirmation: boolean;
   confirmation: "connected" | "not_connected" | null;
   ticketProtocol: string | null;
+  /** A troca automatica nao funcionou e a Central ja abriu (ou esta abrindo) o chamado com os dados do cliente. */
+  fallbackTicket: boolean;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -151,7 +156,11 @@ export function publicJob(job: RouterJobRecord): PublicRouterJob {
     done: isFinalState(job.state),
     bands: job.bands,
     message:
-      job.customerConfirmation === "not_connected"
+      job.kind === "change_password" && !job.customerConfirmation && isFinalState(job.state) && job.state !== "completed" && job.errorCode !== "ACCEPTED_NOT_VERIFIED" && (job.ticketProtocol || job.hasFallback)
+        ? job.ticketProtocol
+          ? `Não conseguimos trocar a senha automaticamente. Abrimos o chamado ${job.ticketProtocol} e nossa equipe troca para você.`
+          : "Não conseguimos trocar a senha automaticamente. Já guardamos o seu pedido e estamos abrindo o chamado para nossa equipe trocar para você."
+        : job.customerConfirmation === "not_connected"
         ? job.ticketProtocol
           ? `Abrimos o chamado ${job.ticketProtocol} para nossa equipe resolver.`
           : "Registramos que você não conseguiu conectar."
@@ -165,6 +174,7 @@ export function publicJob(job: RouterJobRecord): PublicRouterJob {
     needsConfirmation: awaitsCustomer(job),
     confirmation: job.customerConfirmation,
     ticketProtocol: job.ticketProtocol,
+    fallbackTicket: job.kind === "change_password" && !job.customerConfirmation && (Boolean(job.ticketProtocol) || (job.hasFallback && job.state !== "completed" && job.errorCode !== "ACCEPTED_NOT_VERIFIED" && isFinalState(job.state))),
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     finishedAt: job.finishedAt
@@ -205,6 +215,85 @@ export class RouterWifiService {
   ) {
     this.ownership = new OwnershipService(store, sgpClient);
     this.publicKey = loadAgentPublicKey(config.agentPublicKey);
+  }
+
+  // ---------- dados memorizados (senha escolhida) ----------
+
+  /** Chave so da Central (derivada do segredo do agente); o agente nao usa esta copia. */
+  private fallbackKey(): Buffer | null {
+    const token = this.config.agentToken;
+    return token ? Buffer.from(hkdfSync("sha256", token, "acessanet-router-wifi", "fallback-v1", 32)) : null;
+  }
+
+  private encryptFallback(password: string): string | null {
+    const key = this.fallbackKey();
+    if (!key) return null;
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const data = Buffer.concat([cipher.update(password, "utf8"), cipher.final()]);
+    return `${iv.toString("base64")}.${cipher.getAuthTag().toString("base64")}.${data.toString("base64")}`;
+  }
+
+  private decryptFallback(box: string | null): string | null {
+    const key = this.fallbackKey();
+    if (!key || !box) return null;
+    try {
+      const [iv, tag, data] = box.split(".").map((part) => Buffer.from(part, "base64"));
+      const decipher = createDecipheriv("aes-256-gcm", key, iv!);
+      decipher.setAuthTag(tag!);
+      return Buffer.concat([decipher.update(data!), decipher.final()]).toString("utf8");
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Texto do chamado com os dados memorizados: redes, motivo e a senha que o cliente escolheu (como ja acontece no pedido
+   * de troca pelo atendimento, para o tecnico trocar no roteador). A senha sai do banco assim que o chamado abre.
+   */
+  private async buildTicketDescription(job: RouterJobRecord, reason: string): Promise<string> {
+    const password = this.decryptFallback(await this.repo.getFallbackEnc(job.id));
+    const when = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(job.finishedAt ?? job.updatedAt));
+    const roteador = (job.result as { vendor?: string | null; model?: string | null } | null) ?? null;
+    return [
+      "Troca de senha do Wi-Fi pedida pelo cliente na Central do Assinante.",
+      reason,
+      `Redes: ${job.bands.map((b) => b.replace("GHz", " GHz")).join(" e ") || "—"}.`,
+      roteador?.vendor ? `Roteador: ${[roteador.vendor, roteador.model].filter(Boolean).join(" ")}.` : "",
+      `Tentativa automática em ${when}.`,
+      password ? `Nova senha escolhida pelo cliente: ${password}` : "A nova senha não ficou guardada: pedir ao cliente por telefone.",
+      "Trocar a senha no roteador do cliente e avisar."
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  /**
+   * A troca automatica nao funcionou: abre o chamado com os dados memorizados (uma vez so) e apaga a senha guardada.
+   * Se nao conseguir abrir agora (ex.: SGP fora), os dados continuam guardados e a varredura tenta de novo.
+   */
+  async ensureFallbackTicket(jobId: string): Promise<void> {
+    if (!this.hooks) return;
+    const job = await this.repo.findById(jobId);
+    if (!job || job.kind !== "change_password" || job.ticketProtocol || !job.hasFallback || job.customerConfirmation) return;
+    if (!isFinalState(job.state) || job.state === "completed" || job.errorCode === "ACCEPTED_NOT_VERIFIED") return;
+    if (!(await this.repo.claimFallback(jobId))) return;
+    try {
+      const reason = `A troca automática NÃO funcionou (${job.errorCode ?? job.state}). Se algo foi aplicado no roteador, pode ter sido só em parte.`;
+      const ticket = await this.hooks.openTicket({ customerId: job.customerId, contractId: job.contractId, description: await this.buildTicketDescription(job, reason) });
+      await this.repo.finishFallback(jobId, ticket.protocol);
+    } catch {
+      await this.repo.releaseFallback(jobId);
+    }
+  }
+
+  /** Varredura periodica: encerra o que parou, abre os chamados que faltam e apaga dados memorizados vencidos. */
+  async sweepFallbacks(limit = 20): Promise<number> {
+    await this.expire();
+    const pending = await this.repo.listFallbackPending(new Date(Date.now() - FALLBACK_KEEP_MS), limit);
+    for (const job of pending) await this.ensureFallbackTicket(job.id);
+    await this.repo.purgeFallbackBefore(new Date(Date.now() - FALLBACK_KEEP_MS));
+    return pending.length;
   }
 
   /** Ligado, com agente configurado e (no piloto) com o contrato na lista. */
@@ -297,15 +386,20 @@ export class RouterWifiService {
       { key: this.publicKey!, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
       Buffer.from(input.newPassword, "utf8")
     ).toString("base64");
-    const job = await this.repo.create({ customerId: input.customerId, contractId: input.contractId, kind: "change_password", bands, secretEnc });
+    const job = await this.repo.create({ customerId: input.customerId, contractId: input.contractId, kind: "change_password", bands, secretEnc, fallbackEnc: this.encryptFallback(input.newPassword) });
     return publicJob(job);
   }
 
   /** Acompanhamento: o cliente so ve as proprias tarefas. */
   async getJob(customerId: string, jobId: string) {
     await this.expire();
-    const job = await this.repo.findById(jobId);
+    let job = await this.repo.findById(jobId);
     if (!job || job.customerId !== customerId) throw new AppError(404, "RESOURCE_NOT_FOUND", "Solicitação não encontrada.");
+    // pedido que parou (agente caiu) e ainda nao virou chamado: abre agora, para a resposta ja trazer o protocolo
+    if (job.kind === "change_password" && job.hasFallback && !job.ticketProtocol && isFinalState(job.state)) {
+      await this.ensureFallbackTicket(jobId);
+      job = (await this.repo.findById(jobId)) ?? job;
+    }
     return publicJob(job);
   }
 
@@ -348,6 +442,9 @@ export class RouterWifiService {
     // Senha trocada (confirmada ou aceita pelo roteador): avisa o titular, uma vez, sem atrasar a resposta ao agente.
     if (job.kind === "change_password" && (finalState === "completed" || finalError === "ACCEPTED_NOT_VERIFIED")) {
       void this.notifyOnce(jobId).catch(() => undefined);
+    } else if (job.kind === "change_password" && isFinalState(finalState)) {
+      // a troca automatica nao funcionou: memoriza e abre o chamado
+      void this.ensureFallbackTicket(jobId).catch(() => undefined);
     }
     return { ok: true, state: finalState };
   }
@@ -370,17 +467,13 @@ export class RouterWifiService {
     if (!done) throw new AppError(409, "WIFI_ALREADY_CONFIRMED", "Você já respondeu sobre esta alteração.");
 
     if (!input.connected) {
-      const bands = job.bands.join(" e ");
-      const when = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(job.finishedAt ?? job.updatedAt));
-      const description = [
-        "Cliente pediu a troca da senha do Wi-Fi pela Central e disse que NAO conseguiu conectar com a nova senha.",
-        `Redes: ${bands}.`,
-        `Troca feita pelo sistema em ${when}; o roteador aceitou o pedido, mas a senha nao pode ser conferida automaticamente.`,
-        "A senha nova NAO esta neste chamado. Entrar em contato com o cliente e ajustar a senha do Wi-Fi."
-      ].join("\n");
+      const description = await this.buildTicketDescription(
+        job,
+        "O cliente disse que NÃO conseguiu conectar com a nova senha (o roteador tinha aceitado o pedido, mas não deu para conferir)."
+      );
       try {
         const ticket = await this.hooks?.openTicket({ customerId: input.customerId, contractId: job.contractId, description });
-        if (ticket) await this.repo.setTicket(job.id, ticket.protocol);
+        if (ticket) await this.repo.finishFallback(job.id, ticket.protocol);
       } catch (error) {
         // O chamado nao abriu agora: a resposta do cliente fica gravada e a tela oferece o atendimento manual.
         const fresh = await this.repo.findById(job.id);
@@ -389,6 +482,34 @@ export class RouterWifiService {
     }
     const fresh = await this.repo.findById(job.id);
     return { job: publicJob(fresh ?? job), ticketOpened: !input.connected };
+  }
+
+  // ---------- aviso para a equipe ----------
+
+  /**
+   * Trocas de senha que a equipe quer saber (feed para o chat interno/Workspace): o roteador aceitou, o cliente confirmou
+   * ou disse que nao conseguiu conectar. Sem senha, sem IP, sem id interno do cliente.
+   */
+  async staffFeed(since: Date) {
+    const jobs = (await this.repo.listSince(since, 500)).filter(
+      (j) => j.kind === "change_password" && (j.state === "completed" || j.errorCode === "ACCEPTED_NOT_VERIFIED" || j.customerConfirmation !== null)
+    );
+    return jobs.map((j) => {
+      const r = j.result as { vendor?: string | null; model?: string | null } | null;
+      return {
+        id: j.id,
+        contractId: j.contractId,
+        customerId: j.customerId,
+        bands: j.bands,
+        vendor: r?.vendor ?? null,
+        model: r?.model ?? null,
+        state: j.state,
+        confirmation: j.customerConfirmation,
+        ticketProtocol: j.ticketProtocol,
+        finishedAt: j.finishedAt,
+        confirmedAt: j.confirmedAt
+      };
+    });
   }
 
   // ---------- inventario e painel ----------

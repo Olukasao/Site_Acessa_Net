@@ -3073,7 +3073,7 @@ function AtendimentoPage({ categories, connection, currentTicket, loading: dataL
           preferredPeriod,
           ...(observation.trim() ? { observation: observation.trim() } : {}),
           // O ponto vai junto com o pedido: o servidor o coloca dentro do texto do chamado, como a triagem.
-          ...(locationDraft
+          ...(locationDraft && selectedCategoryId !== "router_password"
             ? { location: { latitude: locationDraft.latitude, longitude: locationDraft.longitude, accuracyMeters: locationDraft.accuracyMeters, source: isNativeApp() ? "app" : "web" } }
             : {})
         }
@@ -3971,7 +3971,10 @@ function AttendanceReviewStep({
         ) : null}
       </div>
 
-      <LocationCaptureField value={locationDraft} onChange={onLocationDraftChange} disabled={creatingTicket} />
+      {/* Troca de senha do roteador nao tem visita: nao pede a localizacao da casa. */}
+      {selectedCategory?.id !== "router_password" ? (
+        <LocationCaptureField value={locationDraft} onChange={onLocationDraftChange} disabled={creatingTicket} />
+      ) : null}
 
       <fieldset className={`cliente-period-field ${fieldErrors.period ? "has-error" : ""}`} id="cliente-period-field" tabIndex={-1}>
         <legend>Horário preferencial de atendimento <span className="cliente-required">(obrigatório)</span></legend>
@@ -4600,6 +4603,11 @@ function ClientePasswordField({ autoComplete, id, onChange, value }) {
   );
 }
 
+/** Troca de senha do Wi-Fi/roteador nao tem visita: nao pede a localizacao da casa. */
+function isRouterPasswordTicket(ticket) {
+  return /troca\s+(de\s+)?senha|senha\s+d[oa]\s+(roteador|wi-?\s?fi)/i.test(String(ticket?.title ?? ""));
+}
+
 function TicketPanel({ actionLabel, actionTo, ticket }) {
   const isClosed = ticket.statusInterno === "closed";
 
@@ -4613,7 +4621,7 @@ function TicketPanel({ actionLabel, actionTo, ticket }) {
         </div>
       </div>
       {isTicketFinished(ticket) ? null : <AppointmentNotice appointment={ticket.appointment} />}
-      {!isTicketFinished(ticket) && ticket.protocol ? <VisitLocationCard ticket={ticket} /> : null}
+      {!isTicketFinished(ticket) && ticket.protocol && !isRouterPasswordTicket(ticket) ? <VisitLocationCard ticket={ticket} /> : null}
       {isClosed ? <InlineNotice tone="success" title="Atendimento realizado com sucesso!" /> : null}
       <InfoList
         items={[

@@ -37,6 +37,11 @@ export interface RouterJobRecord {
   /** Protocolo do chamado aberto quando o cliente disse que nao conseguiu conectar. */
   ticketProtocol: string | null;
   notifiedAt: string | null;
+  /** Ha dados memorizados (senha cifrada na Central) para abrir o chamado se a troca nao funcionar. */
+  hasFallback: boolean;
+  /** null = ainda nao tratado; "opening" = alguem esta abrindo o chamado; "done" = chamado aberto; "gave_up" = desistiu apos 24 h. */
+  fallbackState: "opening" | "done" | "gave_up" | null;
+  fallbackTries: number;
 }
 
 export type InventoryManagement = "available" | "offline" | "unsupported" | "requires_validation" | "unreachable" | "not_identified";
@@ -71,6 +76,8 @@ export interface CreateRouterJobInput {
   kind: RouterJobKind;
   bands: WifiBand[];
   secretEnc: string | null;
+  /** Senha nova cifrada com a chave da propria Central, so para abrir o chamado se a troca automatica nao funcionar. */
+  fallbackEnc?: string | null;
   now?: Date;
 }
 
@@ -98,6 +105,20 @@ export interface RouterWifiRepository {
   list(limit: number): Promise<RouterJobRecord[]>;
   /** Tarefas criadas a partir de `since` (relatorio do painel). */
   listSince(since: Date, limit: number): Promise<RouterJobRecord[]>;
+  /** Dados memorizados (cifrados) de uma tarefa. */
+  getFallbackEnc(id: string): Promise<string | null>;
+  /** Troca de senha que nao funcionou e ainda nao virou chamado (criada nas ultimas 24 h). */
+  listFallbackPending(since: Date, limit: number): Promise<RouterJobRecord[]>;
+  /** Reserva a abertura do chamado de uma tarefa (so um processo consegue). */
+  claimFallback(id: string): Promise<boolean>;
+  /** Chamado aberto: guarda o protocolo e apaga os dados memorizados. */
+  finishFallback(id: string, protocol: string): Promise<void>;
+  /** Nao deu para abrir o chamado agora: libera para tentar de novo (os dados continuam memorizados). */
+  releaseFallback(id: string): Promise<void>;
+  /** Apaga os dados memorizados de quem passou do prazo (e marca "gave_up" se nunca virou chamado). */
+  purgeFallbackBefore(before: Date): Promise<number>;
+  /** Encerra por conta do sistema (ex.: agente fora do ar) uma tarefa ainda nao pega por nenhum agente. */
+  failBySystem(id: string, errorCode: string, now: Date): Promise<boolean>;
   /** Resposta do cliente a "Conseguiu conectar?". So vale uma vez, no proprio pedido, enquanto estiver "nao confirmado". */
   confirm(id: string, customerId: string, confirmation: "connected" | "not_connected", now: Date): Promise<boolean>;
   setTicket(id: string, protocol: string): Promise<void>;
@@ -131,10 +152,13 @@ interface Row {
   confirmed_at: string | null;
   ticket_protocol: string | null;
   notified_at: string | null;
+  fallback_enc: string | null;
+  fallback_state: string | null;
+  fallback_tries: number | string | null;
 }
 
 const COLUMNS =
-  "id, customer_id, contract_id, kind, bands, secret_enc, state, result_json, error_code, agent_id, created_at, updated_at, claimed_at, finished_at, customer_confirmation, confirmed_at, ticket_protocol, notified_at";
+  "id, customer_id, contract_id, kind, bands, secret_enc, state, result_json, error_code, agent_id, created_at, updated_at, claimed_at, finished_at, customer_confirmation, confirmed_at, ticket_protocol, notified_at, fallback_enc, fallback_state, fallback_tries";
 const OPEN_STATES = "('pending','connecting','authenticating','updating','verifying')";
 const FINAL_STATES = "('completed','failed','unsupported','unconfirmed')";
 
@@ -166,7 +190,10 @@ function mapRow(row: Row): RouterJobRecord {
     customerConfirmation: row.customer_confirmation === "connected" || row.customer_confirmation === "not_connected" ? row.customer_confirmation : null,
     confirmedAt: row.confirmed_at,
     ticketProtocol: row.ticket_protocol,
-    notifiedAt: row.notified_at
+    notifiedAt: row.notified_at,
+    hasFallback: Boolean(row.fallback_enc),
+    fallbackState: row.fallback_state === "opening" || row.fallback_state === "done" || row.fallback_state === "gave_up" ? row.fallback_state : null,
+    fallbackTries: Number(row.fallback_tries ?? 0)
   };
 }
 
@@ -183,8 +210,8 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
     const id = randomUUID();
     const now = (input.now ?? new Date()).toISOString();
     await this.db.run(
-      "INSERT INTO router_wifi_jobs (id, customer_id, contract_id, kind, bands, secret_enc, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-      [id, input.customerId, input.contractId, input.kind, JSON.stringify(input.bands), input.secretEnc, now, now]
+      "INSERT INTO router_wifi_jobs (id, customer_id, contract_id, kind, bands, secret_enc, fallback_enc, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+      [id, input.customerId, input.contractId, input.kind, JSON.stringify(input.bands), input.secretEnc, input.fallbackEnc ?? null, now, now]
     );
     return (await this.findById(id))!;
   }
@@ -230,7 +257,8 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
     const final = isFinalState(update.state);
     const changed = await this.db.run(
       `UPDATE router_wifi_jobs SET state = ?, result_json = COALESCE(?, result_json), error_code = ?, updated_at = ?,
-         finished_at = ${final ? "?" : "finished_at"}, secret_enc = ${final ? "NULL" : "secret_enc"}
+         finished_at = ${final ? "?" : "finished_at"}, secret_enc = ${final ? "NULL" : "secret_enc"},
+         fallback_enc = CASE WHEN ? = 'completed' THEN NULL ELSE fallback_enc END
        WHERE id = ? AND agent_id = ? AND state IN ${OPEN_STATES}`,
       [
         update.state,
@@ -238,6 +266,7 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
         update.errorCode ?? null,
         at,
         ...(final ? [at] : []),
+        update.state,
         id,
         agentId
       ]
@@ -279,11 +308,54 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
     const changed = await this.db.run(
       `UPDATE router_wifi_jobs SET customer_confirmation = ?, confirmed_at = ?, updated_at = ?,
          state = CASE WHEN ? = 'connected' THEN 'completed' ELSE state END,
-         error_code = CASE WHEN ? = 'connected' THEN NULL ELSE error_code END
+         error_code = CASE WHEN ? = 'connected' THEN NULL ELSE error_code END,
+         fallback_enc = CASE WHEN ? = 'connected' THEN NULL ELSE fallback_enc END
        WHERE id = ? AND customer_id = ? AND kind = 'change_password' AND state = 'unconfirmed' AND customer_confirmation IS NULL`,
-      [confirmation, at, at, confirmation, confirmation, id, customerId]
+      [confirmation, at, at, confirmation, confirmation, confirmation, id, customerId]
     );
     return changed > 0;
+  }
+
+  async getFallbackEnc(id: string) {
+    const rows = (await this.db.all("SELECT fallback_enc FROM router_wifi_jobs WHERE id = ?", [id])) as unknown as Array<{ fallback_enc: string | null }>;
+    return rows[0]?.fallback_enc ?? null;
+  }
+
+  async listFallbackPending(since: Date, limit: number) {
+    // a troca nao funcionou (falhou, sem suporte ou terminou sem saber se aplicou) e ainda nao virou chamado.
+    // "Roteador aceitou" fica de fora: nesse caso quem decide e o cliente ("Conseguiu conectar?").
+    const rows = await this.db.all(
+      `SELECT ${COLUMNS} FROM router_wifi_jobs
+        WHERE kind = 'change_password' AND created_at >= ? AND fallback_enc IS NOT NULL AND ticket_protocol IS NULL
+          AND (fallback_state IS NULL) AND customer_confirmation IS NULL
+          AND (state IN ('failed','unsupported') OR (state = 'unconfirmed' AND (error_code IS NULL OR error_code <> 'ACCEPTED_NOT_VERIFIED')))
+        ORDER BY created_at ASC LIMIT ?`,
+      [since.toISOString(), limit]
+    );
+    return rows.map(mapRow);
+  }
+
+  async claimFallback(id: string) {
+    return (await this.db.run("UPDATE router_wifi_jobs SET fallback_state = 'opening', fallback_tries = fallback_tries + 1 WHERE id = ? AND fallback_state IS NULL AND ticket_protocol IS NULL", [id])) > 0;
+  }
+
+  async finishFallback(id: string, protocol: string) {
+    await this.db.run("UPDATE router_wifi_jobs SET ticket_protocol = ?, fallback_state = 'done', fallback_enc = NULL WHERE id = ?", [protocol, id]);
+  }
+
+  async releaseFallback(id: string) {
+    await this.db.run("UPDATE router_wifi_jobs SET fallback_state = NULL WHERE id = ? AND fallback_state = 'opening'", [id]);
+  }
+
+  async purgeFallbackBefore(before: Date) {
+    const at = before.toISOString();
+    await this.db.run("UPDATE router_wifi_jobs SET fallback_state = 'gave_up' WHERE fallback_enc IS NOT NULL AND ticket_protocol IS NULL AND (fallback_state IS NULL OR fallback_state = 'opening') AND created_at < ? AND state IN ('failed','unsupported','unconfirmed')", [at]);
+    return this.db.run("UPDATE router_wifi_jobs SET fallback_enc = NULL WHERE fallback_enc IS NOT NULL AND created_at < ? AND state NOT IN ('pending','connecting','authenticating','updating','verifying')", [at]);
+  }
+
+  async failBySystem(id: string, errorCode: string, now: Date) {
+    const at = now.toISOString();
+    return (await this.db.run("UPDATE router_wifi_jobs SET state = 'failed', error_code = ?, secret_enc = NULL, updated_at = ?, finished_at = ? WHERE id = ? AND state = 'pending'", [errorCode, at, at, id])) > 0;
   }
 
   async setTicket(id: string, protocol: string) {

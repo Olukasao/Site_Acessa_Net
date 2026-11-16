@@ -222,6 +222,9 @@ export async function migrateMysql(pool: Pool): Promise<void> {
       confirmed_at VARCHAR(32) NULL,
       ticket_protocol VARCHAR(64) NULL,
       notified_at VARCHAR(32) NULL,
+      fallback_enc TEXT NULL,
+      fallback_state VARCHAR(16) NULL,
+      fallback_tries INT NOT NULL DEFAULT 0,
       INDEX idx_router_wifi_jobs_state (state, created_at),
       INDEX idx_router_wifi_jobs_contract (contract_id, kind, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -603,6 +606,19 @@ export async function migrateMysql(pool: Pool): Promise<void> {
       INDEX idx_network_incident_contracts_contract (contract_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+
+  // router_wifi_jobs ja existe em producao: colunas novas entram por ALTER (aditivo, idempotente).
+  for (const [column, definition] of [
+    ["customer_confirmation", "VARCHAR(16) NULL"],
+    ["confirmed_at", "VARCHAR(32) NULL"],
+    ["ticket_protocol", "VARCHAR(64) NULL"],
+    ["notified_at", "VARCHAR(32) NULL"],
+    ["fallback_enc", "TEXT NULL"],
+    ["fallback_state", "VARCHAR(16) NULL"],
+    ["fallback_tries", "INT NOT NULL DEFAULT 0"]
+  ] as const) {
+    await addMysqlColumnIfMissing(pool, "router_wifi_jobs", column, definition);
+  }
 	}
 
 /**
