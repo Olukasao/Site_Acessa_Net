@@ -140,6 +140,14 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
     expect(r.json().state).toBe("unconfirmed");
     expect((await container.routerWifiJobs.findById(jobId))?.errorCode).toBe("VERIFY_FAILED");
 
+    // roteador aceitou mas nao deu para reler (ex.: Huawei mascara a senha): continua "nao confirmado", com a mensagem certa
+    const j2 = (await app.inject({ method: "POST", url: "/api/customer/wifi/password", headers: { authorization: auth }, payload: change(), remoteAddress: freshIp() })).json().job.id;
+    await app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1" }, remoteAddress: freshIp() });
+    const r2 = await app.inject({ method: "POST", url: `/api/internal/router-agent/jobs/${j2}`, headers: agent, payload: { agentId: "a1", state: "completed", result: { bands: ["5GHz"], verified: false, accepted: true } }, remoteAddress: freshIp() });
+    expect(r2.json().state).toBe("unconfirmed");
+    const seen = await app.inject({ method: "GET", url: `/api/customer/wifi/jobs/${j2}`, headers: { authorization: auth }, remoteAddress: freshIp() });
+    expect(seen.json().job.message).toMatch(/aceitou a nova senha/);
+
     // pendente sem agente -> falha; em andamento parado -> não confirmado (nunca repete sozinho)
     const repo = container.routerWifiJobs;
     const old = new Date(Date.now() - 10 * 60_000);

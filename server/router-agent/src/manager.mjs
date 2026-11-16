@@ -1,5 +1,5 @@
-import { adapterFor } from "./adapters/registry.mjs";
-import { routerHttp } from "./http.mjs";
+import { adapterFor, allAdapters } from "./adapters/registry.mjs";
+import { checkPin, routerHttp } from "./http.mjs";
 import { ipAllowed, routerBaseUrl } from "./policy.mjs";
 
 const VENDOR_LABEL = { tplink: "TP-Link", huawei: "Huawei", stavix: "Stavix", mercusys: "Mercusys" };
@@ -44,16 +44,45 @@ export class RouterManager {
     if (!conn.online) return { outcome: "offline" };
     if (!conn.ip) throw Object.assign(new Error("IP da sessao ilegivel"), { code: "SGP_UNAVAILABLE" });
     const eq = await this.d.sgp.equipmentType(access.serviceId);
-    const vendor = eq.vendor;
+    if (eq.vendor === "customer_owned") return { outcome: "unsupported", vendor: eq.vendor, conn };
+    // IP fora da faixa liberada: nao conectamos em nada
+    if (!ipAllowed(conn.ip, this.d.cidrs)) return { outcome: "unreachable", vendor: eq.vendor, conn };
+    // Sem "Tipo equipamento" no SGP: tenta reconhecer pelo proprio roteador (so certificado conhecido + pagina de login, sem login)
+    const vendor = eq.vendor ?? (await this.detectVendor(conn.ip));
     if (!vendor) return { outcome: "not_identified", conn };
-    if (vendor === "customer_owned") return { outcome: "unsupported", vendor, conn };
     const adapter = adapterFor(vendor);
     if (!adapter) return { outcome: "unsupported", vendor, conn };
-    // IP fora da faixa liberada: nao conectamos. Fabricante sem porta/protocolo configurado: ainda em validacao.
-    if (!ipAllowed(conn.ip, this.d.cidrs)) return { outcome: "unreachable", vendor, conn, adapter };
     const baseUrl = routerBaseUrl(conn.ip, vendor, this.d.endpoints, this.d.cidrs);
+    // fabricante sem porta/protocolo configurado: ainda em validacao
     if (!baseUrl) return { outcome: "requires_validation", vendor, conn, adapter };
-    return { outcome: "ok", vendor, conn, adapter, baseUrl };
+    const pins = this.d.endpoints[vendor]?.pins ?? [];
+    let model = null;
+    if (adapter.support === "supported") {
+      try {
+        model = (await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins }) })).model;
+      } catch (error) {
+        if (error?.code === "ROUTER_CERT_UNKNOWN") return { outcome: "requires_validation", vendor, conn, adapter };
+        throw error;
+      }
+      // so o modelo validado em bancada e alterado; os outros do mesmo fabricante ficam "em validacao"
+      if (typeof adapter.supportsModel === "function" && !adapter.supportsModel(model)) return { outcome: "requires_validation", vendor, model, conn, adapter };
+    }
+    return { outcome: "ok", vendor, model, conn, adapter, baseUrl, pins };
+  }
+
+  /** Reconhece o fabricante pelo certificado (pin) e pela pagina de login. Nunca tenta senha. */
+  async detectVendor(ip) {
+    for (const adapter of allAdapters()) {
+      const ep = this.d.endpoints[adapter.vendor];
+      if (adapter.support !== "supported" || !ep?.pins?.length) continue;
+      const baseUrl = routerBaseUrl(ip, adapter.vendor, this.d.endpoints, this.d.cidrs);
+      if (!baseUrl) continue;
+      const pin = await checkPin(baseUrl, ep.pins, this.d.routerTimeoutMs);
+      if (!pin.ok) continue;
+      const id = await adapter.identify({ baseUrl, http: routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins: ep.pins }) }).catch(() => null);
+      if (id?.vendor === adapter.vendor) return adapter.vendor;
+    }
+    return null;
   }
 
   statusResult(base, extra = {}) {
@@ -72,6 +101,7 @@ export class RouterManager {
     if (r.outcome === "offline") return report("completed", { result: this.statusResult({}) });
     const label = VENDOR_LABEL[r.vendor] ?? null;
     if (r.outcome === "not_identified") return report("completed", { result: this.statusResult({ online: true, management: "not_identified" }) });
+    if (r.outcome === "requires_validation") return report("completed", { result: this.statusResult({ online: true, vendor: label, model: r.model ?? null, management: "requires_validation" }) });
     if (r.outcome === "unsupported") return report("completed", { result: this.statusResult({ online: true, vendor: label, management: "unsupported" }) });
     if (r.outcome === "unreachable") return report("completed", { result: this.statusResult({ online: true, vendor: label, management: "unreachable" }) });
     if (r.outcome === "requires_validation" || r.adapter.support !== "supported" || this.d.dryRun) {
@@ -84,7 +114,7 @@ export class RouterManager {
         result: this.statusResult({
           online: true,
           vendor: label,
-          model: id.model ?? null,
+          model: r.model ?? id.model ?? null,
           firmware: id.firmware ?? null,
           management: "available",
           bands: info.bands ?? [],
@@ -124,8 +154,10 @@ export class RouterManager {
           applied = true;
           await report("verifying");
           const verified = await r.adapter.verifyWifiConfiguration(ctx, session, { password: secret.toString("utf8"), bands: job.bands });
-          return report("completed", { result: { bands: job.bands, verified: verified === true } });
+          // accepted: o roteador aceitou e a rede continua igual (nao e prova de que a senha mudou; a Central mostra "nao confirmado")
+          return report("completed", { result: { bands: job.bands, verified: verified === true, accepted: true } });
         } catch (error) {
+          this.d.log?.warn?.(`[router-agent] troca ${r.vendor}: ${String(error?.message ?? error).slice(0, 160)}`);
           // Depois de mandar a alteracao nao da para saber se o roteador aplicou: nao confirmado (e nunca repetimos sozinhos).
           if (applied || error?.code !== "ROUTER_UNREACHABLE") return report("unconfirmed", { errorCode: applied ? "VERIFY_FAILED" : codeOf(error) });
           return report("failed", { errorCode: "ROUTER_UNREACHABLE" });
@@ -139,22 +171,29 @@ export class RouterManager {
   /** Conecta, autentica, executa e sempre encerra a sessao do painel. Respeita o limite por fabricante. */
   async withRouter(r, fn, report) {
     const limiter = this.d.perVendor.get(r.vendor) ?? this.d.perVendor.get("*");
-    return limiter.run(async () => {
+    // um acesso por vez a cada roteador: o painel aceita poucas sessoes e um login novo derruba o anterior
+    this.perRouter ??= new Map();
+    const key = r.conn.ip;
+    if (!this.perRouter.has(key)) this.perRouter.set(key, new Limiter(1));
+    const routerLock = this.perRouter.get(key);
+    return routerLock.run(() => limiter.run(async () => {
       const credentials = this.d.credentials.get(r.vendor);
       if (!credentials) return report("unsupported", { errorCode: "ROUTER_REQUIRES_VALIDATION" });
-      const ctx = { baseUrl: r.baseUrl, credentials, http: routerHttp(r.baseUrl, { timeoutMs: this.d.routerTimeoutMs }) };
+      const ctx = { baseUrl: r.baseUrl, credentials, http: routerHttp(r.baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins: r.pins ?? [] }) };
       let session = null;
       try {
         await report("authenticating");
         try {
           session = await r.adapter.authenticate(ctx);
         } catch (error) {
+          this.d.log?.warn?.(`[router-agent] login ${r.vendor}: ${String(error?.message ?? error).slice(0, 160)}`);
           return report("failed", { errorCode: error?.code === "ROUTER_UNREACHABLE" ? "ROUTER_UNREACHABLE" : "ROUTER_AUTH_FAILED" });
         }
         return await fn(ctx, session);
       } finally {
         if (session) await r.adapter.closeSession(ctx, session).catch(() => undefined);
+        if (routerLock.running <= 1 && routerLock.queue.length === 0) this.perRouter.delete(key);
       }
-    });
+    }));
   }
 }

@@ -1,4 +1,5 @@
 import { PendingValidationAdapter } from "./base.mjs";
+import { HuaweiOntAdapter } from "./huaweiOnt.mjs";
 
 // O que falta para cada fabricante virar "supported". Preencher a partir de um roteador de bancada
 // (modelo e firmware exatos), olhando o painel no navegador com as ferramentas de desenvolvedor.
@@ -11,7 +12,8 @@ const COMMON = [
 
 const ADAPTERS = {
   tplink: new PendingValidationAdapter("tplink", [...COMMON, "painel pede so a senha (sem usuario): confirmar o formato do envio (alguns firmwares cifram a senha no navegador)"]),
-  huawei: new PendingValidationAdapter("huawei", [...COMMON]),
+  // Huawei: validado o EG8145V5-V2; outros modelos Huawei ficam "em validacao" (supportsModel)
+  huawei: new HuaweiOntAdapter(),
   stavix: new PendingValidationAdapter("stavix", [...COMMON, "o SGP nao tem 'Stavix' no Tipo equipamento: definir como identificar (cadastro no SGP ou leitura do proprio roteador)"]),
   mercusys: new PendingValidationAdapter("mercusys", [...COMMON, "credencial de administrador nao informada"])
 };
@@ -22,6 +24,10 @@ export function adapterFor(vendor) {
 
 export function listAdapters() {
   return Object.values(ADAPTERS).map((a) => ({ vendor: a.vendor, ...a.capabilities(), validatedModels: a.validatedModels }));
+}
+
+export function allAdapters() {
+  return Object.values(ADAPTERS);
 }
 
 /** So para testes: troca/inclui um adaptador. */

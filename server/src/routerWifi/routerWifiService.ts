@@ -53,6 +53,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   SGP_UNAVAILABLE: "Não conseguimos consultar sua conexão agora. Tente de novo em alguns minutos.",
   CONTRACT_NOT_FOUND: "Não encontramos a conexão deste contrato.",
   VERIFY_FAILED: "O roteador recebeu o pedido, mas não confirmamos a nova senha. Teste a nova senha; se não funcionar, abra um atendimento.",
+  ACCEPTED_NOT_VERIFIED: "O roteador aceitou a nova senha. Conecte seus aparelhos com ela; se não funcionar, abra um atendimento.",
   AGENT_UNAVAILABLE: "O serviço de Wi-Fi está indisponível agora. Tente de novo em alguns minutos.",
   AGENT_TIMEOUT: "Não recebemos a confirmação do roteador. Teste a nova senha; se não funcionar, abra um atendimento.",
   INTERNAL: "Não foi possível concluir agora. Tente de novo mais tarde."
@@ -86,7 +87,7 @@ const statusResultSchema = z
     canChangePassword: z.boolean()
   })
   .strict();
-const changeResultSchema = z.object({ bands: z.array(bandSchema).max(2), verified: z.boolean() }).strict();
+const changeResultSchema = z.object({ bands: z.array(bandSchema).max(2), verified: z.boolean(), accepted: z.boolean().optional() }).strict();
 
 export const agentReportSchema = z
   .object({
@@ -277,7 +278,7 @@ export class RouterWifiService {
     let finalError = errorCode ?? null;
     if (job.kind === "change_password" && state === "completed" && (result as { verified?: boolean } | null)?.verified !== true) {
       finalState = "unconfirmed";
-      finalError = finalError ?? "VERIFY_FAILED";
+      finalError = finalError ?? ((result as { accepted?: boolean } | null)?.accepted === true ? "ACCEPTED_NOT_VERIFIED" : "VERIFY_FAILED");
     }
     if ((finalState === "failed" || finalState === "unsupported") && !finalError) finalError = "INTERNAL";
 

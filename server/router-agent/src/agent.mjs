@@ -62,6 +62,7 @@ export class Agent {
         dryRun: cfg.dryRun,
         perVendor,
         routerTimeoutMs: cfg.routerTimeoutMs,
+        log,
         decrypt: (secretEnc) => privateDecrypt({ key: privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, Buffer.from(String(secretEnc), "base64"))
       });
   }

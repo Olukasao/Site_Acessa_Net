@@ -57,7 +57,7 @@ test("destino: só IP do SGP dentro da faixa liberada e porta configurada do fab
 
 test("cliente HTTP do roteador recusa outro destino e não segue redirecionamento", async () => {
   const calls = [];
-  const http = routerHttp("http://100.64.1.2:80", { fetchImpl: async (url, init) => (calls.push([url, init.redirect]), new Response("ok")) });
+  const http = routerHttp("http://100.64.1.2:80", { transport: async (url, init) => (calls.push([url, init.redirect]), { status: 200, headers: {}, text: async () => "ok" }) });
   await http.request("/login.htm");
   assert.deepEqual(calls[0], ["http://100.64.1.2/login.htm", "manual"]);
   await assert.rejects(http.request("http://evil.com/"), /fora do roteador/);
@@ -165,7 +165,7 @@ test("modelo validado: autentica, troca, verifica e sempre fecha a sessão", asy
   const { states, report } = recorder();
   await managerWith({ sgp: fakeVendor }).changePassword({ contractId: "1001", kind: "change_password", bands: ["2.4GHz", "5GHz"], secretEnc: "x" }, report);
   assert.deepEqual(states.map((s) => s.state), ["connecting", "authenticating", "updating", "verifying", "completed"]);
-  assert.deepEqual(states.at(-1).result, { bands: ["2.4GHz", "5GHz"], verified: true });
+  assert.deepEqual(states.at(-1).result, { bands: ["2.4GHz", "5GHz"], verified: true, accepted: true });
   assert.deepEqual(adapter.changed, { password: "Casa-Nova#2026", bands: ["2.4GHz", "5GHz"] });
   assert.equal(adapter.closed, 1);
   assert.equal(adapterFor("fake"), adapter);
@@ -178,7 +178,7 @@ test("sem verificação = não confirmado; falha de login = falha; erro no meio 
     await managerWith({ sgp: fakeVendor }).changePassword({ contractId: "1001", kind: "change_password", bands: ["5GHz"], secretEnc: "x" }, report);
     return states.at(-1);
   };
-  assert.deepEqual((await run({ verified: false })).result, { bands: ["5GHz"], verified: false }); // a Central transforma em "nao confirmado"
+  assert.deepEqual((await run({ verified: false })).result, { bands: ["5GHz"], verified: false, accepted: true }); // a Central transforma em "nao confirmado"
   assert.deepEqual(await run({ authFail: true }), { state: "failed", errorCode: "ROUTER_AUTH_FAILED" });
   assert.deepEqual(await run({ changeFail: "INTERNAL" }), { state: "unconfirmed", errorCode: "INTERNAL" });
   assert.deepEqual(await run({ changeFail: "ROUTER_UNREACHABLE" }), { state: "failed", errorCode: "ROUTER_UNREACHABLE" });
@@ -197,4 +197,14 @@ test("limite de simultâneas", async () => {
   let peak = 0;
   await Promise.all(Array.from({ length: 6 }, () => lim.run(async () => { now++; peak = Math.max(peak, now); await new Promise((r) => setTimeout(r, 10)); now--; })));
   assert.equal(peak, 2);
+});
+
+test("Huawei: nome do produto da página de login e só o modelo validado é alterado", async () => {
+  const { parseProductName, HuaweiOntAdapter } = await import("../src/adapters/huaweiOnt.mjs");
+  assert.equal(parseProductName("var ProductName = 'EG8145V5\\x2dV2';"), "EG8145V5-V2");
+  assert.equal(parseProductName("<html></html>"), null);
+  const a = new HuaweiOntAdapter({ browserPath: "/nao/usado" });
+  assert.equal(a.supportsModel("EG8145V5-V2"), true);
+  assert.equal(a.supportsModel("HG8245H"), false);
+  assert.equal(a.supportsModel(null), false);
 });

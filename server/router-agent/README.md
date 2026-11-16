@@ -14,6 +14,9 @@ App/Site -> Central (Hostinger) -- tarefa: contrato + senha cifrada --> Agente (
 - A senha nova chega cifrada (RSA-OAEP, chave pública do agente na Central). Só o agente abre. A Central apaga o texto cifrado quando a tarefa termina.
 - O destino vem **só do SGP** e precisa estar em `ROUTER_ALLOWED_CIDRS`. A porta e o protocolo vêm de `ROUTER_ENDPOINTS`, por fabricante. O cliente nunca informa IP, porta ou roteador.
 - As credenciais de administrador ficam no cofre cifrado (`ROUTER_CREDENTIALS_PATH` + `ROUTER_CREDENTIALS_KEY`). Nunca vão ao git, à Central ou ao log.
+- Sem "Tipo equipamento" no SGP, o agente reconhece o roteador pelo **certificado fixado** e pela página de login, **sem tentar senha** (o Huawei bloqueia após 3 senhas erradas).
+- Um acesso por vez a cada roteador (um login novo derruba a sessão anterior).
+- Huawei: a senha volta mascarada no painel, então a troca termina como "não confirmado" com a mensagem "o roteador aceitou a nova senha".
 - Com `ROUTER_AGENT_DRY_RUN=1` (o padrão), o agente só lê o SGP e **nunca entra num roteador**.
 - O painel do SGP não é API oficial. Se o layout mudar, a leitura devolve vazio e a tarefa falha com `SGP_UNAVAILABLE`, sem chutar valores.
 
@@ -22,7 +25,7 @@ App/Site -> Central (Hostinger) -- tarefa: contrato + senha cifrada --> Agente (
 | Fabricante | Situação | Credencial no cofre |
 |---|---|---|
 | TP-Link | `requires_validation` | sim (só senha) |
-| Huawei | `requires_validation` | sim |
+| Huawei | **EG8145V5-V2 validado** (16/11/2026, https na porta 80, certificado fixado, troca pelo próprio painel com navegador sem tela). Outros modelos Huawei: `requires_validation` | sim |
 | Stavix | `requires_validation` (não existe no "Tipo equipamento" do SGP) | sim |
 | Mercusys | `requires_validation` | não informada |
 
