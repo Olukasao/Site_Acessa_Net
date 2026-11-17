@@ -151,6 +151,12 @@ test("Stavix: assinatura da página, OUI do MAC, modelo, firmware e faixa", asyn
   assert.equal(bandOfLabel("5 GHz (A+N+AC)"), "5GHz");
   assert.equal(bandOfLabel("2.4 GHz (B+G+N)"), "2.4GHz");
   assert.equal(bandOfLabel(""), null);
+  const { loginUsers } = await import("../src/adapters/stavixRealtek.mjs");
+  assert.deepEqual(loginUsers("root", ["acessanet"]), ["root", "acessanet"]);
+  assert.deepEqual(loginUsers("acessanet", ["acessanet"]), ["acessanet"]);
+  assert.deepEqual(loginUsers(null, ["acessanet"]), ["", "acessanet"]);
+  assert.deepEqual(loginUsers("root", []), ["root"]);
+  assert.deepEqual(new StavixRealtekAdapter({ fallbackUsers: ["acessanet"] }).fallbackUsers, ["acessanet"]);
   const http = (html, status = 200) => ({ request: async () => ({ status, text: async () => html }) });
   const ad = new StavixRealtekAdapter({ ouis: ["aa:bb:cc"] });
   // assinatura + OUI conhecido (padrao da bancada ou configurado) = Stavix; sem MAC ou OUI desconhecido = nunca
@@ -161,6 +167,27 @@ test("Stavix: assinatura da página, OUI do MAC, modelo, firmware e faixa", asyn
   assert.equal((await ad.identify({ http: http("<html></html>"), mac: "0c:f0:b4:00:00:01" })).vendor, null);
   assert.equal((await ad.identify({ http: http(login, 404), mac: "0c:f0:b4:00:00:01" })).vendor, null);
   assert.equal(ad.supportsModel("QUALQUER-MODELO"), true);
+});
+
+test("Stavix: nunca insiste em IP que bloqueou ou recusou, e começa pelo usuário que já funcionou", async () => {
+  const { LoginGuard } = await import("../src/adapters/stavixRealtek.mjs");
+  let agora = 1_000_000;
+  const g = new LoginGuard(() => agora);
+  assert.equal(g.blocked("ip1"), null);
+  g.block("ip1", "ROUTER_AUTH_FAILED", 30 * 60_000);
+  assert.deepEqual(g.blocked("ip1"), { code: "ROUTER_AUTH_FAILED" });
+  assert.equal(g.blocked("ip2"), null); // outro roteador nao e afetado
+  agora += 29 * 60_000;
+  assert.ok(g.blocked("ip1"));
+  agora += 2 * 60_000;
+  assert.equal(g.blocked("ip1"), null);
+  assert.deepEqual(g.order("ip1", ["root", "acessanet"]), ["root", "acessanet"]);
+  g.worked("ip1", "acessanet");
+  assert.deepEqual(g.order("ip1", ["root", "acessanet"]), ["acessanet", "root"]);
+  assert.deepEqual(g.order("ip1", ["root"]), ["root"]); // usuario lembrado que saiu da lista nao volta
+  g.block("ip1", "ROUTER_UNREACHABLE", 600_000);
+  g.worked("ip1", "root"); // entrou: libera o castigo
+  assert.equal(g.blocked("ip1"), null);
 });
 
 test("Stavix é reconhecido pelo manager sem SGP (assinatura + OUI do MAC da sessão)", async () => {

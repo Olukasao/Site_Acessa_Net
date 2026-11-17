@@ -22,6 +22,49 @@ const DEFAULT_OUIS = ["0cf0b4"];
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const LOGOUT_BODY = "save=Logout&submit-url=%2Fadmin%2Flogin.asp";
 
+/** Usuarios a tentar, em ordem, sem repetir: o do cofre primeiro, depois os de reserva. */
+export function loginUsers(primary, fallbacks = []) {
+  return [...new Set([String(primary ?? ""), ...fallbacks.map(String)])].filter((u, i) => i === 0 || u !== "");
+}
+
+/**
+ * O Stavix BLOQUEIA o IP de quem erra o login (403 "Your client does not have permission", medido em bancada). Por isso:
+ *  - lembra qual usuario funcionou em cada roteador e comeca por ele (menos tentativas erradas);
+ *  - depois de uma recusa em todos os usuarios, ou de um 403, espera antes de tentar de novo naquele IP (nunca insiste).
+ */
+export class LoginGuard {
+  constructor(now = () => Date.now()) {
+    this.now = now;
+    this.cooldown = new Map(); // chave -> { until, code }
+    this.user = new Map(); // chave -> ultimo usuario que entrou
+  }
+  /** { code } se ainda e cedo para tentar de novo, senao null. */
+  blocked(key) {
+    const c = this.cooldown.get(key);
+    if (!c) return null;
+    if (this.now() >= c.until) {
+      this.cooldown.delete(key);
+      return null;
+    }
+    return { code: c.code };
+  }
+  block(key, code, ms) {
+    this.cooldown.set(key, { until: this.now() + ms, code });
+  }
+  worked(key, user) {
+    this.cooldown.delete(key);
+    this.user.set(key, user);
+  }
+  /** Lista de usuarios com o que ja funcionou neste roteador na frente. */
+  order(key, users) {
+    const known = this.user.get(key);
+    return known && users.includes(known) ? [known, ...users.filter((u) => u !== known)] : users;
+  }
+}
+const REJECTED_COOLDOWN_MS = 30 * 60_000; // todos os usuarios recusados (senha trocada no roteador?)
+const BLOCKED_COOLDOWN_MS = 10 * 60_000; // o painel respondeu 403 (IP bloqueado)
+const isForbidden = (text) => /403 Forbidden|does not have permission/i.test(String(text ?? ""));
+
 /** A pagina de login e a do painel Realtek/Boa (formLogin com desafio)? Nao identifica a marca. */
 export function isRealtekBoaLogin(html) {
   const text = String(html);
@@ -56,11 +99,14 @@ export class StavixRealtekAdapter extends BaseRouterAdapter {
   validatedModels = VALIDATED_MODELS;
   missing = [];
 
-  constructor({ browserPath, launch, ouis } = {}) {
+  constructor({ browserPath, launch, ouis, fallbackUsers, guard } = {}) {
     super();
     this.browserPath = browserPath ?? process.env.ROUTER_BROWSER_PATH;
     this.launch = launch; // so para testes
     const lista = ouis ?? String(process.env.ROUTER_STAVIX_OUIS ?? "").split(/[\s,;]+/).filter(Boolean);
+    // usuario(s) tentados se o do cofre for recusado (mesma senha). Padrao: acessanet; ROUTER_STAVIX_FALLBACK_USERS="" desliga.
+    this.guard = guard ?? new LoginGuard();
+    this.fallbackUsers = fallbackUsers ?? String(process.env.ROUTER_STAVIX_FALLBACK_USERS ?? "acessanet").split(/[\s,;]+/).filter(Boolean);
     this.ouis = new Set([...DEFAULT_OUIS, ...lista].map((o) => ouiOf(o)).filter(Boolean));
   }
 
@@ -86,6 +132,9 @@ export class StavixRealtekAdapter extends BaseRouterAdapter {
   }
 
   async authenticate(ctx) {
+    const key = new URL(ctx.baseUrl).host;
+    const espera = this.guard.blocked(key);
+    if (espera) throw fail(espera.code, "login adiado: o painel recusou ou bloqueou as tentativas anteriores");
     const { chromium } = await import("playwright-core");
     const browser = await timed("router.navegador", () => acquireBrowser(this.launch ?? ((o) => chromium.launch(o)), { headless: true, executablePath: this.browserPath }));
     let context = null;
@@ -105,24 +154,51 @@ export class StavixRealtekAdapter extends BaseRouterAdapter {
       const session = { browser, context, page, origin, dialogs, frame: null, model: null, firmware: null, bandIdx: null };
       liveSessions.set(context, session);
       let entrou = false;
+      const usuarios = this.guard.order(key, loginUsers(ctx.credentials.username, this.fallbackUsers));
       await timed("router.login.enviar", async () => {
-        for (let tentativa = 0; tentativa < 2 && !entrou; tentativa++) {
-          await timed("router.login.pagina", () => page.goto(`${origin}/admin/login.asp`, { waitUntil: "domcontentloaded" }));
+        let liberou = false;
+        let rejeitado = false;
+        let quem = null;
+        // cada usuario so e tentado se o anterior foi RECUSADO pelo painel (com a mesma senha); sem resposta ou painel ocupado nunca troca de usuario
+        for (let i = 0; i < usuarios.length && !entrou; i++) {
+          const aberta = await timed("router.login.pagina", () => page.goto(`${origin}/admin/login.asp`, { waitUntil: "domcontentloaded" }));
+          if (aberta?.status() === 403) {
+            this.guard.block(key, "ROUTER_UNREACHABLE", BLOCKED_COOLDOWN_MS);
+            throw fail("ROUTER_UNREACHABLE", "o painel bloqueou este acesso (403)");
+          }
           if (!(await page.locator("input[name=username]").count())) throw fail("ROUTER_UNREACHABLE", "pagina de login nao abriu");
-          await page.fill("input[name=username]", ctx.credentials.username ?? "");
+          await page.fill("input[name=username]", usuarios[i]);
           await page.fill("input[name=password]", ctx.credentials.password);
           await page.click("input[name=save]");
-          entrou = await page.locator("iframe[name=contentIframe]").waitFor({ state: "attached", timeout: 15000 }).then(() => true, () => false);
-          if (entrou) break;
+          // entrou (aparece a area de conteudo) ou o painel respondeu com erro: o que vier primeiro
+          await page.waitForFunction(() => document.querySelector("iframe[name=contentIframe]") || /ERROR/i.test(document.body?.innerText ?? ""), null, { timeout: 15000 }).catch(() => undefined);
+          entrou = (await page.locator("iframe[name=contentIframe]").count()) > 0;
+          if (entrou) {
+            quem = usuarios[i];
+            break;
+          }
           const texto = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
-          if (/you have logined/i.test(texto) && tentativa === 0) {
+          if (/you have logined/i.test(texto)) {
+            if (liberou) throw fail("ROUTER_UNREACHABLE", "painel ocupado por outra sessao");
             // sessao esquecida (outro painel aberto ou saida que falhou): o proprio logout do painel libera, sem cookie
+            liberou = true;
             await this.#postLogout(context, origin);
             await page.waitForTimeout(1500);
+            i--; // mesmo usuario de novo
             continue;
           }
-          throw fail(/you have logined/i.test(texto) ? "ROUTER_UNREACHABLE" : "ROUTER_AUTH_FAILED", "login recusado");
+          if (isForbidden(texto)) {
+            this.guard.block(key, "ROUTER_UNREACHABLE", BLOCKED_COOLDOWN_MS);
+            throw fail("ROUTER_UNREACHABLE", "o painel bloqueou este acesso (403)");
+          }
+          if (!/ERROR/i.test(texto)) throw fail("ROUTER_UNREACHABLE", "o painel nao respondeu ao login");
+          rejeitado = true;
         }
+        if (!entrou) {
+          if (rejeitado) this.guard.block(key, "ROUTER_AUTH_FAILED", REJECTED_COOLDOWN_MS);
+          throw fail(rejeitado ? "ROUTER_AUTH_FAILED" : "ROUTER_UNREACHABLE", "login recusado");
+        }
+        this.guard.worked(key, quem);
       });
       loggedIn = true;
       // a area de conteudo (iframe) aparece um instante depois do login
