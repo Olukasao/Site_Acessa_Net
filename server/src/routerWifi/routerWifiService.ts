@@ -390,6 +390,13 @@ export class RouterWifiService {
     await this.repo.expireStale(new Date(), PENDING_MAX_MS, RUNNING_MAX_MS);
   }
 
+  /** A leitura de status e mais velha que a ultima troca de nome concluida? Entao os nomes dela ja nao valem. */
+  private async statusOlderThanNameChange(contractId: string, status: RouterJobRecord | null) {
+    if (!status?.finishedAt) return false;
+    const change = await this.repo.latestFinished(contractId, "change_ssid");
+    return change?.state === "completed" && Boolean(change.finishedAt) && Date.parse(change.finishedAt!) >= Date.parse(status.finishedAt);
+  }
+
   /** Leitura do roteador do contrato (modelo, redes, se da para trocar a senha). Cria uma tarefa se nao houver leitura recente. */
   async status(customerId: string, contractId: string) {
     await this.ownership.assertContract(customerId, contractId);
@@ -402,7 +409,8 @@ export class RouterWifiService {
     const open = await this.repo.findOpen(contractId, "status");
     if (open) return { available: true as const, agentOnline: true, job: publicJob(open), pendingChange };
     const last = await this.repo.latestFinished(contractId, "status");
-    if (last?.finishedAt && Date.now() - Date.parse(last.finishedAt) < STATUS_FRESH_MS) return { available: true as const, agentOnline: true, job: publicJob(last), pendingChange };
+    // leitura recente so vale se nenhuma troca de nome terminou depois dela (senao a tela mostraria o nome antigo)
+    if (last?.finishedAt && Date.now() - Date.parse(last.finishedAt) < STATUS_FRESH_MS && !(await this.statusOlderThanNameChange(contractId, last))) return { available: true as const, agentOnline: true, job: publicJob(last), pendingChange };
     await this.consume(contractId, `router_wifi:status:contract:${contractId}`, STATUS_PER_CONTRACT);
     const job = await this.repo.create({ customerId, contractId, kind: "status", bands: [], secretEnc: null });
     return { available: true as const, agentOnline: true, job: publicJob(job), pendingChange };
@@ -414,7 +422,9 @@ export class RouterWifiService {
     if (!this.availableFor(contractId)) return { available: false, networks: [] };
     const last = await this.repo.latestFinished(contractId, "status");
     const result = last?.state === "completed" ? (last.result as { bands?: WifiBand[]; ssids?: Record<string, string> } | null) : null;
-    return { available: true, networks: (result?.bands ?? []).map((band) => ({ band, ssid: result?.ssids?.[band] ?? null })) };
+    // nome trocado depois dessa leitura: o nome guardado e o antigo, entao nao mostra nome (a proxima leitura traz o novo)
+    const velho = await this.statusOlderThanNameChange(contractId, last);
+    return { available: true, networks: (result?.bands ?? []).map((band) => ({ band, ssid: velho ? null : (result?.ssids?.[band] ?? null) })) };
   }
 
   async changePassword(input: {

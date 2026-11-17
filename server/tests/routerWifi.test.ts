@@ -344,6 +344,30 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
     return jobId;
   }
 
+  it("depois de trocar o nome, a leitura antiga não vale: cria leitura nova e não mostra o nome velho", async () => {
+    const ctx = await setup();
+    const { app, auth } = ctx;
+    const get = (url: string) => app.inject({ method: "GET", url, headers: { authorization: auth }, remoteAddress: freshIp() });
+    const claim = () => app.inject({ method: "POST", url: "/api/internal/router-agent/claim", headers: agent, payload: { agentId: "a1" }, remoteAddress: freshIp() });
+    const report = (id: string, payload: Record<string, unknown>) => app.inject({ method: "POST", url: `/api/internal/router-agent/jobs/${id}`, headers: agent, payload: { agentId: "a1", ...payload }, remoteAddress: freshIp() });
+    // leitura concluida com o nome antigo
+    const s1 = (await get("/api/customer/wifi/status?contractId=1001")).json().job.id as string;
+    await claim();
+    await report(s1, { state: "completed", result: { online: true, vendor: "Stavix", model: "X", firmware: null, management: "available", bands: ["2.4GHz", "5GHz"], ssids: { "2.4GHz": "Velho 2.4", "5GHz": "Velho 5G" }, canChangePassword: true } });
+    expect((await get("/api/customer/wifi/status?contractId=1001")).json().job.id).toBe(s1); // ainda recente: reaproveita
+    // troca de nome concluida depois da leitura
+    await new Promise((r) => setTimeout(r, 20));
+    const c = (await app.inject({ method: "POST", url: "/api/customer/wifi/name", headers: { authorization: auth }, payload: { contractId: "1001", name: "Novo", currentPassword: "Senha-Central-1" }, remoteAddress: freshIp() })).json().job.id as string;
+    await claim();
+    await report(c, { state: "completed", result: { bands: ["2.4GHz", "5GHz"], verified: true, accepted: true, vendor: "Stavix", model: "X" } });
+    const nets = (await get("/api/customer/wifi/networks?contractId=1001")).json();
+    expect(nets.networks.map((n: { ssid: string | null }) => n.ssid)).toEqual([null, null]);
+    const s2 = (await get("/api/customer/wifi/status?contractId=1001")).json().job;
+    expect(s2.id).not.toBe(s1);
+    expect(s2.done).toBe(false);
+    await app.close();
+  });
+
   it.each(["CONTRACT_SUSPENDED", "CONTRACT_CANCELED"])("contrato %s: mensagem própria, sem chamado e sem guardar a senha", async (code) => {
     const ctx = await setup();
     const jobId = await failedAttempt(ctx, "failed", code);
