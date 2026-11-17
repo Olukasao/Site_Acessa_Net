@@ -19,11 +19,12 @@ export class SgpClient {
     this.loggingIn = null;
   }
 
-  async verificaAcesso(contractId) {
-    return timed("sgp.verificaacesso", () => this.#verificaAcesso(contractId));
+  /** `diag` (opcional) recebe `reason` quando o SGP nao acha o contrato: lista_vazia | outro_contrato | sem_servico | resposta_ilegivel. */
+  async verificaAcesso(contractId, diag = {}) {
+    return timed("sgp.verificaacesso", () => this.#verificaAcesso(contractId, diag));
   }
 
-  async #verificaAcesso(contractId) {
+  async #verificaAcesso(contractId, diag) {
     const body = new FormData();
     body.append("contrato", String(contractId));
     const res = await this.fetch(`${this.cfg.uraBaseUrl}/api/ura/verificaacesso/`, {
@@ -34,8 +35,18 @@ export class SgpClient {
     });
     if (!res.ok) throw sgpError(`verificaacesso HTTP ${res.status}`);
     const data = await res.json().catch(() => null);
-    if (!data || String(data.contratoId ?? "") !== String(contractId)) return null; // outro contrato ou nao achou
+    if (!data) {
+      diag.reason = "resposta_ilegivel";
+      return null;
+    }
+    if (String(data.contratoId ?? "") !== String(contractId)) {
+      // [] = o SGP nao devolveu nada (contrato sem servico de internet, ex.: antes da instalacao, ou instabilidade)
+      diag.reason = Array.isArray(data) && data.length === 0 ? "lista_vazia" : "outro_contrato";
+      if (diag.reason === "outro_contrato") diag.returned = String(data.contratoId ?? "");
+      return null;
+    }
     const serviceId = /^\d{1,12}$/.test(String(data.servico_id ?? "")) ? String(data.servico_id) : null;
+    if (!serviceId) diag.reason = "sem_servico";
     return { online: Number(data.status) === 1, serviceId, login: typeof data.login === "string" ? data.login : null };
   }
 

@@ -115,8 +115,12 @@ export class RouterManager {
 
   /** Descobre o roteador do contrato. Devolve { outcome, ... } sem tocar no roteador. */
   async resolve(contractId) {
-    const access = await this.d.sgp.verificaAcesso(contractId);
-    if (!access || !access.serviceId) return { outcome: "not_found" };
+    const diag = {};
+    const access = await this.d.sgp.verificaAcesso(contractId, diag);
+    if (!access || !access.serviceId) {
+      this.d.log?.info?.(`[router-agent] contrato ${String(contractId).replace(/\D/g, "").slice(0, 12)} nao encontrado no SGP: ${diag.reason ?? "sem_servico"}${diag.returned ? ` (SGP devolveu o contrato ${diag.returned.replace(/\D/g, "").slice(0, 12)})` : ""}`);
+      return { outcome: "not_found" };
+    }
     if (!access.online) return { outcome: "offline" };
     // sessao PPPoE (sempre fresca) e tipo de equipamento (em cache) ao mesmo tempo
     const [conn, eq] = await Promise.all([this.d.sgp.connectionStatus(access.serviceId), this.d.sgp.equipmentType(access.serviceId)]);
