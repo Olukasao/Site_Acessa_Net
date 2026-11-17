@@ -32,7 +32,7 @@ App/Site -> Central (Hostinger) -- tarefa: contrato + senha cifrada --> Agente (
 |---|---|---|
 | TP-Link | `requires_validation` | sim (só senha) |
 | Huawei | **EG8145V5-V2 validado** (16/11/2026, https na porta 80, certificado fixado, troca pelo próprio painel com navegador sem tela). Outros modelos Huawei: `requires_validation` | sim |
-| Stavix | `requires_validation` (não existe no "Tipo equipamento" do SGP) | sim |
+| Stavix | **MP-G421R (firmware V2.0.3) validado** (17/11/2026, **http** na porta 80, painel Realtek/Boa "XPON HGU", troca de senha e nome nas duas redes conferida de volta). Os outros modelos Stavix usam o mesmo painel e entram igual; se a tela for diferente, a troca falha com segurança e vira chamado. Reconhecimento sem SGP: assinatura da página de login **e** prefixo (OUI) do MAC da sessão PPPoE (`0c:f0:b4` por padrão; outros prefixos Stavix em `ROUTER_STAVIX_OUIS`, separados por vírgula). Só admite **uma sessão de admin por vez, presa ao IP** ("you have logined"): o agente sai sempre pelo logout do painel e, se achar uma sessão esquecida, a libera. | sim |
 | Mercusys | `requires_validation` | não informada |
 
 Para validar um modelo é preciso um roteador de bancada com modelo e firmware exatos. Com o navegador e as ferramentas de desenvolvedor, levantar o fluxo de login, onde ficam SSID e senha (2.4 e 5 GHz), como o painel salva e como reler a configuração. Depois disso, o adaptador do modelo é implementado em `src/adapters/` e muda para `supported`, com testes.

@@ -157,7 +157,7 @@ export class RouterManager {
         doCache = true;
       } else if (!vendor) {
         // Sem "Tipo equipamento" no SGP: reconhece pelo proprio roteador (certificado conhecido + pagina de login, sem login)
-        const achado = await this.detectVendor(conn.ip);
+        const achado = await this.detectVendor(conn.ip, conn.mac);
         vendor = achado?.vendor ?? null;
         model = achado?.model ?? null;
         sondado = true;
@@ -196,13 +196,13 @@ export class RouterManager {
    * Reconhece fabricante e modelo SEM depender do certificado fixado: so um GET na pagina de login (publica), sem senha. Serve para
    * identificar qualquer versao/modelo; quem decide se pode ALTERAR continua sendo o modelo validado + o certificado fixado.
    */
-  async identifyAnyCert(adapter, baseUrl) {
+  async identifyAnyCert(adapter, baseUrl, extra = {}) {
     const http = routerHttp(baseUrl, { timeoutMs: this.d.routerTimeoutMs, anyCert: true });
-    return adapter.identify({ baseUrl, http }).catch(() => null);
+    return adapter.identify({ baseUrl, http, ...extra }).catch(() => null);
   }
 
   /** Reconhece o fabricante pelo certificado (pin) e pela pagina de login. Nunca tenta senha. */
-  async detectVendor(ip) {
+  async detectVendor(ip, mac = null) {
     for (const adapter of allAdapters()) {
       const ep = this.d.endpoints[adapter.vendor];
       // HTTPS precisa do certificado fixado (pins); HTTP puro (TP-Link) se reconhece so pela pagina de login
@@ -210,7 +210,7 @@ export class RouterManager {
       const baseUrl = routerBaseUrl(ip, adapter.vendor, this.d.endpoints, this.d.cidrs);
       if (!baseUrl) continue;
       // certificado fora da lista (modelo/versao nova): ainda reconhece pela pagina de login, sem senha
-      const id = await this.identifyAnyCert(adapter, baseUrl);
+      const id = await this.identifyAnyCert(adapter, baseUrl, { mac });
       if (id?.vendor === adapter.vendor) return { vendor: adapter.vendor, model: id.model ?? null };
     }
     return null;
@@ -232,7 +232,7 @@ export class RouterManager {
     if (eq.vendor === "customer_owned") return entry("unsupported", { vendor: "customer_owned" });
     if (!ipAllowed(conn.ip, this.d.cidrs)) return entry("unreachable", { vendor: eq.vendor });
     return this.underRouterLock(conn.ip, async () => {
-    const detected = await this.detectVendor(conn.ip);
+    const detected = await this.detectVendor(conn.ip, conn.mac);
     const vendor = eq.vendor ?? detected?.vendor ?? null;
     if (vendor) {
       const adapter = adapterFor(vendor);
@@ -240,7 +240,7 @@ export class RouterManager {
       const pins = this.d.endpoints[vendor]?.pins ?? [];
       if (adapter?.support === "supported" && baseUrl) {
         const id = await this.identifyAnyCert(adapter, baseUrl);
-        if (id?.model) return entry(adapter.supportsModel?.(id.model) === false ? "requires_validation" : "available", { vendor, model: id.model });
+        if (id?.model || id?.confirmed) return entry(adapter.supportsModel?.(id.model) === false ? "requires_validation" : "available", { vendor, model: id.model ?? null });
       }
       return entry(baseUrl ? "requires_validation" : "requires_validation", { vendor });
     }
@@ -301,13 +301,13 @@ export class RouterManager {
         this.d.log?.warn?.(`[router-agent] ${r.vendor}: nenhuma rede lida (${(info.errors ?? []).join("; ") || "sem detalhe"})`);
         return report("failed", { errorCode: "ROUTER_UNREACHABLE" });
       }
-      const id = r.model ? { model: r.model, firmware: null } : await r.adapter.identify(ctx);
+      const id = r.model || info.model ? { model: r.model ?? info.model, firmware: null } : await r.adapter.identify(ctx);
       return report("completed", {
         result: this.statusResult({
           online: true,
           vendor: label,
-          model: r.model ?? id.model ?? null,
-          firmware: id.firmware ?? null,
+          model: r.model ?? info.model ?? id.model ?? null,
+          firmware: info.firmware ?? id.firmware ?? null,
           management: "available",
           bands: info.bands ?? [],
           ssids: info.ssids ?? {},

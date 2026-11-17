@@ -138,6 +138,54 @@ test("contractStateOf traduz o status do contrato no SGP", async () => {
   assert.deepEqual([1, "3", 4, 2, null, undefined].map(contractStateOf), ["active", "canceled", "suspended", "other", null, null]);
 });
 
+test("Stavix: assinatura da página, OUI do MAC, modelo, firmware e faixa", async () => {
+  const { StavixRealtekAdapter, isRealtekBoaLogin, ouiOf, parseStavixStatus, bandOfLabel } = await import("../src/adapters/stavixRealtek.mjs");
+  const login = '<form action=/boaform/admin/formLogin method=POST><input type="hidden" name="challenge"><input name=username>';
+  assert.equal(isRealtekBoaLogin(login), true);
+  assert.equal(isRealtekBoaLogin("<html>outra pagina</html>"), false);
+  assert.equal(ouiOf("0c:F0:B4:7d:a4:ba"), "0cf0b4");
+  assert.equal(ouiOf("0CF0B47DA4BA"), "0cf0b4");
+  assert.equal(ouiOf(null), null);
+  assert.deepEqual(parseStavixStatus("Device Status System Device Name MP-G421R Uptime 13 min Firmware Version V2.0.3 HW version: RT274CX"), { model: "MP-G421R", firmware: "V2.0.3" });
+  assert.deepEqual(parseStavixStatus("nada"), { model: null, firmware: null });
+  assert.equal(bandOfLabel("5 GHz (A+N+AC)"), "5GHz");
+  assert.equal(bandOfLabel("2.4 GHz (B+G+N)"), "2.4GHz");
+  assert.equal(bandOfLabel(""), null);
+  const http = (html, status = 200) => ({ request: async () => ({ status, text: async () => html }) });
+  const ad = new StavixRealtekAdapter({ ouis: ["aa:bb:cc"] });
+  // assinatura + OUI conhecido (padrao da bancada ou configurado) = Stavix; sem MAC ou OUI desconhecido = nunca
+  assert.equal((await ad.identify({ http: http(login), mac: "0c:f0:b4:00:00:01" })).vendor, "stavix");
+  assert.equal((await ad.identify({ http: http(login), mac: "aa:bb:cc:00:00:01" })).vendor, "stavix");
+  assert.equal((await ad.identify({ http: http(login), mac: "11:22:33:00:00:01" })).vendor, null);
+  assert.equal((await ad.identify({ http: http(login) })).vendor, null);
+  assert.equal((await ad.identify({ http: http("<html></html>"), mac: "0c:f0:b4:00:00:01" })).vendor, null);
+  assert.equal((await ad.identify({ http: http(login, 404), mac: "0c:f0:b4:00:00:01" })).vendor, null);
+  assert.equal(ad.supportsModel("QUALQUER-MODELO"), true);
+});
+
+test("Stavix é reconhecido pelo manager sem SGP (assinatura + OUI do MAC da sessão)", async () => {
+  const { StavixRealtekAdapter } = await import("../src/adapters/stavixRealtek.mjs");
+  const login = '<form action=/boaform/admin/formLogin><input type="hidden" name="challenge">';
+  const m = managerWith({});
+  m.d.endpoints = { ...m.d.endpoints, stavix: { protocol: "http", port: 80 } };
+  const ad = new StavixRealtekAdapter();
+  const vistos = [];
+  m.identifyAnyCert = async (adapter, baseUrl, extra) => (vistos.push(extra), adapter.identify({ baseUrl, mac: extra?.mac, http: { request: async () => ({ status: 200, text: async () => login }) } }));
+  const achado = await (async () => {
+    // so o Stavix registrado responde; os outros fabricantes nao reconhecem a pagina
+    const { registerAdapter, adapterFor } = await import("../src/adapters/registry.mjs");
+    const antes = adapterFor("stavix");
+    registerAdapter(ad);
+    try {
+      return await m.detectVendor("100.65.0.9", "0c:f0:b4:11:22:33");
+    } finally {
+      registerAdapter(antes);
+    }
+  })();
+  assert.equal(achado?.vendor, "stavix");
+  assert.ok(vistos.every((x) => x?.mac === "0c:f0:b4:11:22:33"));
+});
+
 class FakeAdapter extends BaseRouterAdapter {
   vendor = "fake";
   support = "supported";

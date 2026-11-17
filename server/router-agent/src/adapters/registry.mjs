@@ -1,5 +1,6 @@
 import { PendingValidationAdapter } from "./base.mjs";
 import { HuaweiOntAdapter } from "./huaweiOnt.mjs";
+import { StavixRealtekAdapter } from "./stavixRealtek.mjs";
 import { TplinkXx230Adapter } from "./tplinkXx230.mjs";
 
 // O que falta para cada fabricante virar "supported". Preencher a partir de um roteador de bancada
@@ -16,7 +17,8 @@ const ADAPTERS = {
   tplink: new TplinkXx230Adapter(),
   // Huawei: validado o EG8145V5-V2; outros modelos Huawei ficam "em validacao" (supportsModel)
   huawei: new HuaweiOntAdapter(),
-  stavix: new PendingValidationAdapter("stavix", [...COMMON, "o SGP nao tem 'Stavix' no Tipo equipamento: definir como identificar (cadastro no SGP ou leitura do proprio roteador)"]),
+  // Stavix: validado o MP-G421R (HTTP, porta 80, painel Realtek/Boa); os outros modelos Stavix usam o mesmo painel
+  stavix: new StavixRealtekAdapter(),
   mercusys: new PendingValidationAdapter("mercusys", [...COMMON, "credencial de administrador nao informada"])
 };
 
