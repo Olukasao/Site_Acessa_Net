@@ -324,6 +324,8 @@ export async function buildApp(container: AppContainer = createContainer()) {
       "POST /api/wifi/radius/authorize",
       /** Feed de contratacoes pendentes para o chat interno (token proprio, ver contractRequestRoutes.ts). */
       "GET /api/integracoes/contratacoes/pendentes",
+      /** Pedidos que ja sairam de "novo" (em atendimento, cancelados com motivo, encerrados) para a aba Contratacoes do Workspace (mesmo token). */
+      "GET /api/integracoes/contratacoes/andamento",
       /** Avaliacoes respondidas por protocolo, para o painel de atendimento dos tecnicos da Agenda (mesmo token do feed acima). */
       "GET /api/integracoes/avaliacoes",
       /** Trocas de senha do Wi-Fi para o aviso da equipe no Workspace (mesmo token do feed de contratacoes). */
