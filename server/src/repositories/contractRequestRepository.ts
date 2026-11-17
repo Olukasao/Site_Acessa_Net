@@ -140,6 +140,15 @@ export interface ContractFeedItem {
   createdAt: string;
 }
 
+/** Pedido que já saiu de "novo", como o Workspace enxerga (sem endereço, WhatsApp, CPF ou e-mail). */
+export interface ContractProgressFeedItem extends ContractFeedItem {
+  status: string;
+  updatedAt: string;
+  assignedAdminName: string | null;
+  /** Só em cancelados: texto digitado ao cancelar (sem o prefixo "Motivo do cancelamento:"). */
+  cancelReason: string | null;
+}
+
 /** Quem marcou "Quero receber ofertas e novidades" na contratacao online (tela Marketing do admin). */
 export interface ContractMarketingLead {
   id: number;
@@ -189,6 +198,8 @@ export interface ContractRequestRepository {
   countNew(): Promise<number>;
   /** Pedidos com status "novo" (mais recentes primeiro), so o que o aviso do chat interno precisa. */
   listNewForFeed(limit: number): Promise<ContractFeedItem[]>;
+  /** Pedidos que já saíram de "novo" (mais recentemente alterados primeiro), com o motivo quando cancelados. */
+  listProgressForFeed(limit: number): Promise<ContractProgressFeedItem[]>;
   /** Admins ativos com um dos papeis informados (sem hash de senha, sem role). */
   listAssignees(roles: readonly string[]): Promise<ContractRequestAssignee[]>;
   findAssignee(id: string, roles: readonly string[]): Promise<ContractRequestAssignee | null>;
@@ -324,6 +335,32 @@ interface FeedRow {
   plan_name: string;
   city: string;
   created_at: string;
+}
+
+const CANCEL_PREFIX = "Motivo do cancelamento:";
+const SELECT_PROGRESS = `SELECT r.id, r.protocol, r.customer_name, r.plan_name, r.city, r.created_at, r.updated_at, r.status,
+  a.name AS admin_name,
+  (SELECT e.note FROM contract_request_events e WHERE e.request_id = r.id AND e.type = 'note' AND e.note LIKE '${CANCEL_PREFIX}%'
+    ORDER BY e.id DESC LIMIT 1) AS cancel_note
+  FROM contract_requests r LEFT JOIN admin_users a ON a.id = r.assigned_admin_id
+  WHERE r.status <> 'novo' ORDER BY r.updated_at DESC, r.id DESC LIMIT ?`;
+
+interface ProgressRow extends FeedRow {
+  updated_at: string;
+  status: string;
+  admin_name: string | null;
+  cancel_note: string | null;
+}
+
+function progressFromRow(row: ProgressRow): ContractProgressFeedItem {
+  const reason = row.status === "cancelado" && row.cancel_note ? row.cancel_note.replace(CANCEL_PREFIX, "").trim() : null;
+  return {
+    ...feedFromRow(row),
+    status: row.status,
+    updatedAt: String(row.updated_at),
+    assignedAdminName: row.admin_name ?? null,
+    cancelReason: reason || null
+  };
 }
 
 function feedFromRow(row: FeedRow): ContractFeedItem {
@@ -646,6 +683,10 @@ export class SqliteContractRequestRepository implements ContractRequestRepositor
     return this.findById(id);
   }
 
+  async listProgressForFeed(limit: number): Promise<ContractProgressFeedItem[]> {
+    return (this.db.prepare(SELECT_PROGRESS).all(limit) as unknown as ProgressRow[]).map(progressFromRow);
+  }
+
   async listNewForFeed(limit: number): Promise<ContractFeedItem[]> {
     return (this.db.prepare(SELECT_FEED).all(limit) as unknown as FeedRow[]).map(feedFromRow);
   }
@@ -787,6 +828,11 @@ export class MysqlContractRequestRepository implements ContractRequestRepository
       connection.release();
     }
     return this.findById(id);
+  }
+
+  async listProgressForFeed(limit: number): Promise<ContractProgressFeedItem[]> {
+    const [rows] = await this.pool.execute(SELECT_PROGRESS, [limit]);
+    return (rows as ProgressRow[]).map(progressFromRow);
   }
 
   async listNewForFeed(limit: number): Promise<ContractFeedItem[]> {

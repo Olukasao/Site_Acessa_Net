@@ -333,6 +333,18 @@ export async function registerContractRequestRoutes(app: FastifyInstance, contai
       return { pendingCount, items };
     });
 
+    // Pedidos que ja sairam de "novo" (em atendimento, cancelados com motivo, encerrados) para a aba Contratacoes do Workspace.
+    // Mesmo token do feed acima; nao traz endereco, WhatsApp, CPF nem e-mail.
+    app.get("/api/integracoes/contratacoes/andamento", async (request, reply) => {
+      const header = request.headers.authorization;
+      const provided = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : "";
+      if (!provided || !safeEqual(provided, feedToken)) {
+        throw new AppError(401, "FEED_TOKEN_REQUIRED", "Token ausente ou inválido.");
+      }
+      reply.header("Cache-Control", "no-store");
+      return { items: await container.contractRequests.listProgressForFeed(150) };
+    });
+
     // Avaliacoes respondidas (nota 1-5 e comentario) por protocolo do chamado: a Agenda cruza com a OS (campo "ocorrencia"
     // do SGP tem esse mesmo protocolo) para dar a nota por tecnico. Traz o nome do cliente (sem CPF/contato). Mesmo token do feed acima.
     app.get("/api/integracoes/avaliacoes", async (request, reply) => {
