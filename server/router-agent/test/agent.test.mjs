@@ -117,6 +117,10 @@ test("offline, contrato não achado, sem fabricante e roteador do cliente", asyn
   const cases = [
     [{ verificaAcesso: async () => ({ online: false, serviceId: "77" }) }, "failed", "ROUTER_OFFLINE"],
     [{ verificaAcesso: async () => null }, "failed", "CONTRACT_NOT_FOUND"],
+    [{ verificaAcesso: async () => null, contractState: async () => "suspended" }, "failed", "CONTRACT_SUSPENDED"],
+    [{ verificaAcesso: async () => null, contractState: async () => "canceled" }, "failed", "CONTRACT_CANCELED"],
+    [{ verificaAcesso: async () => null, contractState: async () => "active" }, "failed", "CONTRACT_NOT_FOUND"],
+    [{ verificaAcesso: async () => null, contractState: async () => { throw new Error("SGP fora"); } }, "failed", "CONTRACT_NOT_FOUND"],
     [{ equipmentType: async () => ({ found: true, label: null, vendor: null }) }, "failed", "ROUTER_NOT_IDENTIFIED"],
     [{ equipmentType: async () => ({ found: true, label: "PARTICULAR", vendor: "customer_owned" }) }, "unsupported", "ROUTER_UNSUPPORTED"],
     [{ connectionStatus: async () => ({ online: true, ip: "192.168.0.10" }) }, "failed", "ROUTER_UNREACHABLE"],
@@ -127,6 +131,11 @@ test("offline, contrato não achado, sem fabricante e roteador do cliente", asyn
     await managerWith({ sgp }).changePassword({ contractId: "1001", kind: "change_password", bands: ["5GHz"], secretEnc: "x" }, report);
     assert.deepEqual(states.at(-1), { state, errorCode }, JSON.stringify(sgp));
   }
+});
+
+test("contractStateOf traduz o status do contrato no SGP", async () => {
+  const { contractStateOf } = await import("../src/sgp.mjs");
+  assert.deepEqual([1, "3", 4, 2, null, undefined].map(contractStateOf), ["active", "canceled", "suspended", "other", null, null]);
 });
 
 class FakeAdapter extends BaseRouterAdapter {

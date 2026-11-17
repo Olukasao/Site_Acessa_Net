@@ -2920,6 +2920,8 @@ const ROUTER_ERROR_LABEL = {
   ROUTER_NOT_IDENTIFIED: "Roteador não identificado",
   SGP_UNAVAILABLE: "SGP indisponível",
   CONTRACT_NOT_FOUND: "Contrato não encontrado",
+  CONTRACT_SUSPENDED: "Contrato suspenso",
+  CONTRACT_CANCELED: "Contrato cancelado",
   VERIFY_FAILED: "Não confirmado",
   ACCEPTED_NOT_VERIFIED: "Aceito, não conferido",
   AGENT_UNAVAILABLE: "Agente fora do ar",

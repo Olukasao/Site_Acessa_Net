@@ -138,6 +138,8 @@ export interface RouterWifiRepository {
   finishFallback(id: string, protocol: string): Promise<void>;
   /** Nao deu para abrir o chamado agora: libera para tentar de novo (os dados continuam memorizados). */
   releaseFallback(id: string): Promise<void>;
+  /** Nao vai abrir chamado (ex.: contrato suspenso/cancelado): marca "gave_up" e apaga os dados memorizados. */
+  giveUpFallback(id: string): Promise<void>;
   /** Apaga os dados memorizados de quem passou do prazo (e marca "gave_up" se nunca virou chamado). */
   purgeFallbackBefore(before: Date): Promise<number>;
   /** Encerra por conta do sistema (ex.: agente fora do ar) uma tarefa ainda nao pega por nenhum agente. */
@@ -393,7 +395,7 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
       `SELECT ${COLUMNS} FROM router_wifi_jobs
         WHERE kind IN ('change_password','change_ssid') AND created_at >= ? AND (fallback_enc IS NOT NULL OR kind = 'change_ssid') AND ticket_protocol IS NULL
           AND (fallback_state IS NULL OR (fallback_state = 'opening' AND updated_at < ?)) AND fallback_tries < 30 AND customer_confirmation IS NULL
-          AND (state IN ('failed','unsupported') OR (state = 'unconfirmed' AND (error_code IS NULL OR error_code <> 'ACCEPTED_NOT_VERIFIED')))
+          AND (error_code IS NULL OR error_code NOT IN ('CONTRACT_SUSPENDED','CONTRACT_CANCELED')) AND (state IN ('failed','unsupported') OR (state = 'unconfirmed' AND (error_code IS NULL OR error_code <> 'ACCEPTED_NOT_VERIFIED')))
         ORDER BY created_at ASC LIMIT ?`,
       [since.toISOString(), staleOpeningBefore.toISOString(), limit]
     );
@@ -417,6 +419,10 @@ class SqlRouterWifiRepository implements RouterWifiRepository {
 
   async releaseFallback(id: string) {
     await this.db.run("UPDATE router_wifi_jobs SET fallback_state = NULL WHERE id = ? AND fallback_state = 'opening'", [id]);
+  }
+
+  async giveUpFallback(id: string) {
+    await this.db.run("UPDATE router_wifi_jobs SET fallback_state = 'gave_up', fallback_enc = NULL WHERE id = ? AND ticket_protocol IS NULL", [id]);
   }
 
   async purgeFallbackBefore(before: Date) {

@@ -21,7 +21,7 @@ export function validNames(names) {
 }
 const SSID_TTL_MS = 30 * 60_000;
 const VENDOR_LABEL = { tplink: "TP-Link", huawei: "Huawei", stavix: "Stavix", mercusys: "Mercusys" };
-const KNOWN_CODES = new Set(["ROUTER_OFFLINE", "ROUTER_UNSUPPORTED", "ROUTER_REQUIRES_VALIDATION", "ROUTER_UNREACHABLE", "ROUTER_AUTH_FAILED", "ROUTER_NOT_IDENTIFIED", "SGP_UNAVAILABLE", "CONTRACT_NOT_FOUND", "VERIFY_FAILED", "INTERNAL"]);
+const KNOWN_CODES = new Set(["ROUTER_OFFLINE", "ROUTER_UNSUPPORTED", "ROUTER_REQUIRES_VALIDATION", "ROUTER_UNREACHABLE", "ROUTER_AUTH_FAILED", "ROUTER_NOT_IDENTIFIED", "SGP_UNAVAILABLE", "CONTRACT_NOT_FOUND", "CONTRACT_SUSPENDED", "CONTRACT_CANCELED", "VERIFY_FAILED", "INTERNAL"]);
 const codeOf = (error) => (KNOWN_CODES.has(error?.code) ? error.code : "INTERNAL");
 
 /** Rejeita se a promessa nao terminar no prazo (o trabalho em si nao e cancelado: quem chamou segue em frente). */
@@ -118,7 +118,16 @@ export class RouterManager {
     const diag = {};
     const access = await this.d.sgp.verificaAcesso(contractId, diag);
     if (!access || !access.serviceId) {
-      this.d.log?.info?.(`[router-agent] contrato ${String(contractId).replace(/\D/g, "").slice(0, 12)} nao encontrado no SGP: ${diag.reason ?? "sem_servico"}${diag.returned ? ` (SGP devolveu o contrato ${diag.returned.replace(/\D/g, "").slice(0, 12)})` : ""}`);
+      // o SGP so devolve servico para contrato ativo: descobre se esta suspenso/cancelado (falha aqui nao muda o resultado)
+      let state = null;
+      try {
+        state = (await this.d.sgp.contractState?.(contractId)) ?? null;
+      } catch {
+        state = null;
+      }
+      this.d.log?.info?.(`[router-agent] contrato ${String(contractId).replace(/\D/g, "").slice(0, 12)} nao encontrado no SGP: ${diag.reason ?? "sem_servico"}${diag.returned ? ` (SGP devolveu o contrato ${diag.returned.replace(/\D/g, "").slice(0, 12)})` : ""}; situacao do contrato: ${state ?? "desconhecida"}`);
+      if (state === "suspended") return { outcome: "suspended" };
+      if (state === "canceled") return { outcome: "canceled" };
       return { outcome: "not_found" };
     }
     if (!access.online) return { outcome: "offline" };
@@ -255,6 +264,8 @@ export class RouterManager {
       return report("failed", { errorCode: codeOf(error) });
     }
     if (r.outcome === "not_found") return report("failed", { errorCode: "CONTRACT_NOT_FOUND" });
+    if (r.outcome === "suspended") return report("failed", { errorCode: "CONTRACT_SUSPENDED" });
+    if (r.outcome === "canceled") return report("failed", { errorCode: "CONTRACT_CANCELED" });
     if (r.outcome === "offline") return report("completed", { result: this.statusResult({}) });
     const label = VENDOR_LABEL[r.vendor] ?? null;
     if (r.outcome === "not_identified") return report("completed", { result: this.statusResult({ online: true, management: "not_identified" }) });
@@ -328,6 +339,8 @@ export class RouterManager {
     }
     const stop = {
       not_found: ["failed", "CONTRACT_NOT_FOUND"],
+      suspended: ["failed", "CONTRACT_SUSPENDED"],
+      canceled: ["failed", "CONTRACT_CANCELED"],
       offline: ["failed", "ROUTER_OFFLINE"],
       not_identified: ["failed", "ROUTER_NOT_IDENTIFIED"],
       unsupported: ["unsupported", "ROUTER_UNSUPPORTED"],

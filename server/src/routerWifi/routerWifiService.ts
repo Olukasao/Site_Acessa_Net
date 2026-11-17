@@ -67,6 +67,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   ROUTER_NOT_IDENTIFIED: "Não identificamos o seu roteador. Abra um atendimento que nossa equipe resolve.",
   SGP_UNAVAILABLE: "Não conseguimos consultar sua conexão agora. Tente de novo em alguns minutos.",
   CONTRACT_NOT_FOUND: "Não encontramos a conexão deste contrato.",
+  CONTRACT_SUSPENDED: "Seu contrato está com pendência e o serviço está suspenso. Regularize para usar este recurso ou fale com nosso atendimento.",
+  CONTRACT_CANCELED: "Este contrato não tem um serviço de internet ativo. Se precisar de ajuda, fale com nosso atendimento.",
   VERIFY_FAILED: "O roteador recebeu o pedido, mas não confirmamos a nova senha. Teste a nova senha; se não funcionar, abra um atendimento.",
   ACCEPTED_NOT_VERIFIED: "O roteador aceitou a nova senha. Conecte seus aparelhos com ela; se não funcionar, abra um atendimento.",
   AGENT_UNAVAILABLE: "O serviço de Wi-Fi está indisponível agora. Tente de novo em alguns minutos.",
@@ -177,7 +179,10 @@ const awaitsCustomer = (job: RouterJobRecord) =>
 
 const hasMemo = (job: RouterJobRecord) => job.hasFallback || job.kind === "change_ssid";
 const isChange = (job: RouterJobRecord) => job.kind === "change_password" || job.kind === "change_ssid";
-const failedWithoutCustomer = (job: RouterJobRecord) => isChange(job) && !job.customerConfirmation && isFinalState(job.state) && job.state !== "completed" && job.errorCode !== "ACCEPTED_NOT_VERIFIED";
+/** Sem roteador para trocar (contrato suspenso/cancelado): nao adianta abrir chamado. */
+const NO_TICKET_CODES = ["CONTRACT_SUSPENDED", "CONTRACT_CANCELED"];
+const failedWithoutCustomer = (job: RouterJobRecord) =>
+  isChange(job) && !job.customerConfirmation && isFinalState(job.state) && job.state !== "completed" && job.errorCode !== "ACCEPTED_NOT_VERIFIED" && !NO_TICKET_CODES.includes(job.errorCode ?? "");
 
 export function publicJob(job: RouterJobRecord): PublicRouterJob {
   const what = job.kind === "change_ssid" ? "o nome do Wi-Fi" : "a senha";
@@ -325,6 +330,10 @@ export class RouterWifiService {
     const job = await this.repo.findById(jobId);
     if (!job || !isChange(job) || job.ticketProtocol || !hasMemo(job) || job.customerConfirmation) return;
     if (!isFinalState(job.state) || job.state === "completed" || job.errorCode === "ACCEPTED_NOT_VERIFIED") return;
+    if (NO_TICKET_CODES.includes(job.errorCode ?? "")) {
+      await this.repo.giveUpFallback(jobId); // sem chamado: apaga já a senha memorizada
+      return;
+    }
     if (!(await this.repo.claimFallback(jobId, new Date(), new Date(Date.now() - OPENING_STALE_MS)))) return;
     try {
       const reason = `A ${job.kind === "change_ssid" ? "troca do nome" : "troca"} automática NÃO funcionou (${job.errorCode ?? job.state}). Se algo foi aplicado no roteador, pode ter sido só em parte.`;

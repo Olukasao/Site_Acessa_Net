@@ -344,6 +344,19 @@ describe("Gerenciar meu Wi-Fi - Central", () => {
     return jobId;
   }
 
+  it.each(["CONTRACT_SUSPENDED", "CONTRACT_CANCELED"])("contrato %s: mensagem própria, sem chamado e sem guardar a senha", async (code) => {
+    const ctx = await setup();
+    const jobId = await failedAttempt(ctx, "failed", code);
+    const seen = (await ctx.app.inject({ method: "GET", url: `/api/customer/wifi/jobs/${jobId}`, headers: { authorization: ctx.auth }, remoteAddress: freshIp() })).json().job;
+    expect(ctx.tickets).toHaveLength(0);
+    expect(seen).toMatchObject({ state: "failed", fallbackTicket: false });
+    expect(seen.message).not.toMatch(/chamado/);
+    expect(await ctx.container.routerWifiJobs.getFallbackEnc(jobId)).toBeNull();
+    expect(await ctx.container.routerWifiService.sweepFallbacks()).toBe(0);
+    expect(ctx.tickets).toHaveLength(0);
+    await ctx.app.close();
+  });
+
   it("troca que não funcionou: memoriza os dados e abre o chamado sozinho, uma vez", async () => {
     const ctx = await setup();
     const jobId = await failedAttempt(ctx, "failed", "ROUTER_UNREACHABLE");

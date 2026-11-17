@@ -50,6 +50,28 @@ export class SgpClient {
     return { online: Number(data.status) === 1, serviceId, login: typeof data.login === "string" ? data.login : null };
   }
 
+  /**
+   * Situacao do CONTRATO no SGP (API URA consultacliente), so para explicar por que o verificaacesso veio vazio:
+   * o SGP so devolve servico de internet para contrato ativo. Devolve "active" | "suspended" | "canceled" | "other" | null (nao sabe).
+   */
+  async contractState(contractId) {
+    return timed("sgp.situacao_contrato", async () => {
+      const body = new FormData();
+      body.append("contrato", String(contractId));
+      const res = await this.fetch(`${this.cfg.uraBaseUrl}/api/ura/consultacliente/`, {
+        method: "POST",
+        headers: { Authorization: "Basic " + Buffer.from(`${this.cfg.uraUsername}:${this.cfg.uraPassword}`).toString("base64"), Accept: "application/json" },
+        body,
+        signal: AbortSignal.timeout(this.cfg.timeoutMs)
+      });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      const c = Array.isArray(data?.contratos) ? data.contratos.find((x) => String(x?.contratoId ?? "") === String(contractId)) : null;
+      if (!c) return null;
+      return contractStateOf(c.contratoStatus);
+    });
+  }
+
   async connectionStatus(serviceId) {
     return timed("sgp.sessao_pppoe", async () => parseConnectionStatus(await this.webGet(`/admin/servicos/internet/${serviceId}/infodetail/?statusonly=1`)));
   }
@@ -125,6 +147,16 @@ export class SgpClient {
     if (!res.ok) throw sgpError(`painel do SGP HTTP ${res.status}`);
     return text;
   }
+}
+
+/** contratoStatus do SGP: 1 Ativo, 3 Cancelado, 4 Suspenso (conferido em 16/11/2026); outro numero = "other". */
+export function contractStateOf(code) {
+  if (code === null || code === undefined || code === "") return null;
+  const n = Number(code);
+  if (n === 1) return "active";
+  if (n === 3) return "canceled";
+  if (n === 4) return "suspended";
+  return Number.isFinite(n) ? "other" : null;
 }
 
 function sgpError(message) {
