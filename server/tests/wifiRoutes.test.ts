@@ -75,6 +75,17 @@ describe("cadastro do Wi-Fi público", () => {
     await app.close();
   });
 
+  it("o erro de login_url recusado mostra só protocolo e host (diagnóstico), sem caminho nem parâmetros", async () => {
+    const app = await buildApp(testContainer());
+    const response = await register(app, form({ context: { ...form().context, loginUrl: "https://portal.exemplo.net:8443/auth/login?token=SEGREDO&x=1" } }));
+    expect(response.statusCode).toBe(400);
+    const mensagem = response.json().error.message as string;
+    expect(mensagem).toContain("[endereço recebido: https://portal.exemplo.net:8443]");
+    expect(mensagem).not.toContain("SEGREDO");
+    expect(mensagem).not.toContain("/auth/login");
+    await app.close();
+  });
+
   it("aceita host extra liberado em WIFI_LOGIN_HOSTS", async () => {
     const app = await buildApp(testContainer({ radiusToken: RADIUS_TOKEN, loginHosts: ["portal.gwn.local"] }));
     const response = await register(app, form({ context: { ...form().context, loginUrl: "https://portal.gwn.local/login" } }));

@@ -114,7 +114,16 @@ export async function registerWifiRoutes(app: FastifyInstance, container: AppCon
 
     const loginUrl = body.context.loginUrl ? trustedLoginUrl(body.context.loginUrl, config.loginHosts) : null;
     if (body.context.loginUrl && !loginUrl) {
-      throw new AppError(400, "INVALID_LOGIN_URL", "Não reconhecemos este ponto de Wi-Fi. Desconecte e conecte de novo na rede.");
+      // Diagnóstico temporário: mostra só protocolo + host + porta do endereço recusado (nunca caminho nem parâmetros).
+      let recebido = "formato inválido";
+      try {
+        const bruto = body.context.loginUrl;
+        const u = new URL(bruto.includes("://") ? bruto : `http://${bruto}`);
+        recebido = `${u.protocol}//${u.host}`.slice(0, 80);
+      } catch {
+        /* mantém "formato inválido" */
+      }
+      throw new AppError(400, "INVALID_LOGIN_URL", `Não reconhecemos este ponto de Wi-Fi. Desconecte e conecte de novo na rede. [endereço recebido: ${recebido}]`);
     }
 
     reply.code(201);
