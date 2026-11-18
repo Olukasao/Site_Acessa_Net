@@ -98,8 +98,41 @@ function safeRedirect(raw: string | undefined) {
   }
 }
 
+/** "Maria da Silva" -> "Maria S." (o aviso da equipe não leva o nome inteiro, e-mail nem telefone). */
+export function nomeAbreviado(fullName: string) {
+  const partes = fullName.trim().split(/\s+/).filter(Boolean);
+  if (partes.length === 0) return "";
+  const primeiro = partes[0] ?? "";
+  const ultimo = partes.length > 1 ? (partes[partes.length - 1] ?? "") : "";
+  return ultimo ? `${primeiro} ${ultimo.charAt(0).toUpperCase()}.` : primeiro;
+}
+
 export async function registerWifiRoutes(app: FastifyInstance, container: AppContainer) {
   const { wifi: config } = container.config;
+
+  // Aviso da equipe no Workspace: dados de marketing obtidos pelo Wi-Fi público (mesmo token do feed de contratações).
+  // Só quem deu o consentimento de marketing; nome abreviado e a rede, sem e-mail nem telefone.
+  const feedToken = container.config.contractFeed.token;
+  if (feedToken) {
+    app.get("/api/integracoes/wifi/marketing", async (request, reply) => {
+      const header = request.headers.authorization;
+      const provided = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : "";
+      if (!provided || !safeEqual(provided, feedToken)) {
+        throw new AppError(401, "FEED_TOKEN_REQUIRED", "Token ausente ou inválido.");
+      }
+      reply.header("Cache-Control", "no-store");
+      const leads = await container.wifi.listMarketingLeads(50);
+      return {
+        total: leads.length,
+        items: leads.map((lead) => ({
+          id: lead.visitorId,
+          name: nomeAbreviado(lead.fullName),
+          establishment: lead.establishment,
+          marketingConsentAt: lead.marketingConsentAt
+        }))
+      };
+    });
+  }
 
   app.post("/api/wifi/cadastro", { bodyLimit: 8 * 1024 }, async (request, reply) => {
     container.rateLimiter.consume(`wifi_registration:ip:${sha256(request.ip || "unknown")}`, CREATE_RATE_RULE);

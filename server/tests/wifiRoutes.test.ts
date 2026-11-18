@@ -86,6 +86,25 @@ describe("cadastro do Wi-Fi público", () => {
     await app.close();
   });
 
+  it("feed de marketing para o Workspace: exige token, só traz quem aceitou marketing e sem e-mail nem telefone", async () => {
+    const FEED = "token-do-feed-com-mais-de-32-caracteres-123456";
+    const container = createContainer({ env: "test", sqlitePath: ":memory:", sgp: { basicUsername: "t", basicPassword: "t" }, wifi: { radiusToken: RADIUS_TOKEN }, contractFeed: { token: FEED } } as never);
+    const app = await buildApp(container);
+    await register(app, form({ fullName: "Maria da Silva", email: "maria@email.com", phone: "(11) 98888-7777", marketingConsent: true }));
+    await register(app, form({ fullName: "Joao Souza", email: "joao@email.com", phone: "(11) 97777-6666", marketingConsent: false }));
+    const get = (token?: string) => app.inject({ method: "GET", url: "/api/integracoes/wifi/marketing", headers: token ? { authorization: `Bearer ${token}` } : {} });
+    expect((await get()).statusCode).toBe(401);
+    expect((await get("errado")).statusCode).toBe(401);
+    const ok = await get(FEED);
+    expect(ok.statusCode).toBe(200);
+    const body = ok.json();
+    expect(body.total).toBe(1);
+    expect(body.items[0]).toMatchObject({ name: "Maria S.", establishment: "AcessaNet Wi-Fi Padaria" });
+    expect(Object.keys(body.items[0]).sort()).toEqual(["establishment", "id", "marketingConsentAt", "name"]);
+    expect(JSON.stringify(body)).not.toMatch(/maria@email|98888|Silva|joao/i);
+    await app.close();
+  });
+
   it("aceita host extra liberado em WIFI_LOGIN_HOSTS", async () => {
     const app = await buildApp(testContainer({ radiusToken: RADIUS_TOKEN, loginHosts: ["portal.gwn.local"] }));
     const response = await register(app, form({ context: { ...form().context, loginUrl: "https://portal.gwn.local/login" } }));
