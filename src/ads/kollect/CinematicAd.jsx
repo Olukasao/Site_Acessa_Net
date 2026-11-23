@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import { useAdTimeline } from "../useAdTimeline";
-import { Globe, Hero } from "./AdScene";
+import { Globe, GlobeGallery } from "./AdScene";
 import BrandLogo from "./BrandLogo";
 import AdCTA from "./AdCTA";
 import { kollectConfig } from "./config";
@@ -10,8 +10,8 @@ import "./styles.css";
 const PATTERN_ROWS = 10;
 
 // "KOLLECT YOUR WORLD": um plano-sequência numa única viewport.
-// Revelação (o globo se desenha, a figure surge em silhueta) -> Universo (o padrão da marca ganha vida)
-// -> Identidade (a câmera entra nos olhos) -> KOLLECT YOUR WORLD (key visual).
+// Revelação (o globo se desenha) -> Universo (o padrão da marca ganha vida)
+// -> Identidade (a câmera mergulha no globo) -> KOLLECT YOUR WORLD (key visual).
 // O CSS sozinho já desenha o key visual final: é o fallback estático.
 export default function CinematicAd({ active = true, duration, reduced = false, config = kollectConfig }) {
   const root = useRef(null);
@@ -43,7 +43,7 @@ export default function CinematicAd({ active = true, duration, reduced = false, 
 
   return (
     <div
-      className="k-ad"
+      className={`k-ad${assets.photos?.length ? " has-photos" : ""}`}
       ref={root}
       style={{
         "--k-ground": colors.ground,
@@ -62,8 +62,10 @@ export default function CinematicAd({ active = true, duration, reduced = false, 
       </div>
 
       <div className="k-stage">
-        <Globe />
-        <Hero hero={assets.hero} />
+        <div className="k-orb">
+          <GlobeGallery photos={assets.photos} />
+          <Globe />
+        </div>
       </div>
 
       <p className="k-kana" lang="ja" aria-hidden="true">

@@ -1,7 +1,7 @@
 /* KOLLECT YOUR WORLD
    Direção: pôster de cultura pop japonesa / campanha editorial.
    Um único gesto forte: o globo de linhas (o "O" de WORLD da assinatura)
-   em escala monumental, com a figure na frente. O resto é silencioso: chão carvão com o padrão da
+   em escala monumental. O resto é silencioso: chão carvão com o padrão da
    marca em tom sobre tom (o mesmo do key visual oficial), assinatura oficial
    alinhada à esquerda, katakana vertical.
    O CSS desenha o KEY VISUAL FINAL; a timeline anima a partir dele. */
@@ -18,11 +18,8 @@
 
   /* Composição vertical (principal) */
   --D: min(calc(var(--kw) * 108), calc(var(--kh) * 52)); /* diâmetro do globo */
-  --cx: calc(var(--kw) * 50); /* centro do globo e da figure */
+  --cx: calc(var(--kw) * 50); /* centro do globo */
   --cy: calc(var(--kh) * 34);
-  --W: min(calc(var(--kw) * 80), calc(var(--kh) * 40)); /* largura da figure */
-  --H: calc(var(--W) * 0.906);
-  --hb: calc(var(--kh) * 61); /* base da figure */
 
   position: absolute;
   inset: 0;
@@ -72,23 +69,32 @@
 .k-stage {
   position: absolute;
   inset: 0;
-  /* a câmera entra nos olhos da figure */
-  transform-origin: var(--cx) calc(var(--hb) - var(--H) * 0.33);
+  /* a câmera mergulha no centro do globo */
+  transform-origin: var(--cx) var(--cy);
   will-change: transform;
 }
 
 /* Globo: o mesmo desenho do "O" de WORLD, em escala monumental.
    Traço fino e constante (não escala com a câmera). */
-.k-globe {
+/* Globo + fotos: um bloco só, que a câmera move junto. */
+.k-orb {
   position: absolute;
   z-index: 1;
   left: calc(var(--cx) - var(--D) / 2);
   top: calc(var(--cy) - var(--D) / 2);
   width: var(--D);
   height: var(--D);
+  will-change: transform;
+}
+
+.k-globe {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
   overflow: visible;
   color: var(--k-line);
-  will-change: transform;
 }
 
 .k-globe ellipse,
@@ -123,36 +129,54 @@
   stroke-opacity: 0.36;
 }
 
-.k-hero {
+/* ---------- Fotos dentro do globo ---------- */
+.k-gallery {
   position: absolute;
-  z-index: 2;
-  left: calc(var(--cx) - var(--W) / 2);
-  top: calc(var(--hb) - var(--H));
-  width: var(--W);
-  height: var(--H);
-  will-change: transform;
+  z-index: 0;
+  inset: 2%;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--k-ground);
+  transform: translateZ(0); /* recorte circular estável no Safari */
+  will-change: transform, opacity;
 }
 
-.k-hero img {
+.k-gallery__img {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
-}
-
-/* Fecha os vazados do desenho (olhos, contornos) com a cor do chão,
-   como na logo original: sem isso as linhas do globo apareceriam pelos olhos. */
-.k-hero__fill {
-  position: absolute;
-  inset: 20% 9% 4%;
-  border-radius: 50% 50% 46% 46% / 42% 42% 58% 58%;
-  background: var(--k-ground);
-}
-
-.k-hero__silhouette {
-  filter: brightness(0);
+  object-fit: cover;
   opacity: 0;
+  will-change: transform, opacity;
+}
+
+/* Sem animação, fica a primeira foto. */
+.k-gallery__img:first-child {
+  opacity: 1;
+}
+
+/* Sombra nas bordas: a foto ganha volume de esfera. */
+.k-gallery__shade {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, transparent 45%, rgba(0, 0, 0, 0.55) 100%);
+  pointer-events: none;
+}
+
+/* Com fotos, o globo fica vazado (sem corpo sólido) e a grade mais discreta. */
+.has-photos .k-globe__body,
+.has-photos .k-globe circle[fill^="url"] {
+  display: none;
+}
+
+.has-photos .k-globe__mer {
+  stroke-opacity: 0.32;
+}
+
+.has-photos .k-globe__lat {
+  stroke-opacity: 0.24;
 }
 
 /* ---------- Katakana vertical ---------- */
@@ -272,8 +296,6 @@
     --D: calc(var(--kh) * 78);
     --cx: calc(var(--kw) * 69);
     --cy: calc(var(--kh) * 46);
-    --W: calc(var(--kh) * 56);
-    --hb: calc(var(--kh) * 82);
   }
 
   .k-pattern__row {
@@ -307,8 +329,6 @@
 @media (max-height: 740px) and (max-aspect-ratio: 1/1) {
   .k-ad {
     --cy: calc(var(--kh) * 32);
-    --W: min(calc(var(--kw) * 78), calc(var(--kh) * 37));
-    --hb: calc(var(--kh) * 57.5);
   }
 
   .k-sign {
@@ -331,8 +351,6 @@
     --D: calc(var(--kh) * 74);
     --cx: calc(var(--kw) * 68);
     --cy: calc(var(--kh) * 42);
-    --W: calc(var(--kh) * 46);
-    --hb: calc(var(--kh) * 74);
   }
 
   .k-sign {

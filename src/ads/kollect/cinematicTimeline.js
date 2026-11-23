@@ -5,14 +5,13 @@ const RIM = 2 * Math.PI * GLOBE_R + 1; // comprimento do contorno, para o traço
 
 // Timeline única, em "segundos de roteiro" (volta de 13 s); timeScale ajusta.
 //
-//  0.0–3.0  REVELAÇÃO   o contorno do globo se desenha e a grade aparece; a figure
-//                       sobe em silhueta; KOLLECT / YOUR WORLD nascem das máscaras
-//                       (marca legível antes de 2 s); a luz acende.
+//  0.0–3.0  REVELAÇÃO   o contorno do globo se desenha e a grade aparece;
+//                       KOLLECT / YOUR WORLD nascem das máscaras (marca legível antes de 2 s).
 //  3.0–6.2  UNIVERSO    o padrão da marca aparece e corre; câmera deriva em 2.5D
-//                       (globo e figure em ritmos diferentes).
-//  6.2–9.2  IDENTIDADE  a assinatura sai; a câmera entra nos olhos da figure e volta.
+//                       (palco e globo em ritmos diferentes).
+//  6.2–9.2  IDENTIDADE  a assinatura sai; a câmera mergulha no globo e volta.
 //  9.2–12.1 KOLLECT YOUR WORLD  a assinatura volta e o key visual fica parado.
-// 12.1–13.0 a luz apaga, o globo se desfaz, fade para preto: a volta
+// 12.1–13.0 o globo se desfaz, fade para preto: a volta
 //           seguinte começa exatamente desse estado, sem corte.
 export const BASE_DURATION = 13;
 
@@ -23,11 +22,10 @@ export function buildKollectTimeline(root, { duration = BASE_DURATION, loop = tr
 
   // Estado inicial de cada volta.
   tl.set(q(".k-fade"), { autoAlpha: 1 }, 0)
-    .set(q(".k-globe"), { scale: 0.92, xPercent: 0 }, 0)
+    .set(q(".k-orb"), { scale: 0.92, xPercent: 0 }, 0)
     .set(q(".k-globe__rim"), { strokeDasharray: RIM, strokeDashoffset: RIM }, 0)
     .set(q(".k-globe__grid"), { autoAlpha: 0 }, 0)
-    .set(q(".k-hero"), { yPercent: 10 }, 0)
-    .set(q(".k-hero__silhouette"), { opacity: 1 }, 0)
+    .set(q(".k-gallery"), { autoAlpha: 0, scale: 0.94 }, 0)
     .set(q(".k-stage"), { scale: 1, xPercent: 0 }, 0)
     .set(lines, { yPercent: 105 }, 0)
     .set(q(".k-sign"), { autoAlpha: 1, y: 0 }, 0)
@@ -37,24 +35,23 @@ export function buildKollectTimeline(root, { duration = BASE_DURATION, loop = tr
   // REVELAÇÃO
   tl.to(q(".k-fade"), { autoAlpha: 0, duration: 0.7, ease: "power1.out" }, 0)
     .to(q(".k-globe__rim"), { strokeDashoffset: 0, duration: 1.7, ease: "power2.inOut" }, 0.15)
-    .to(q(".k-globe"), { scale: 1, duration: 2.6, ease: "power2.out" }, 0.15)
+    .to(q(".k-orb"), { scale: 1, duration: 2.6, ease: "power2.out" }, 0.15)
     .to(q(".k-globe__grid"), { autoAlpha: 1, duration: 1.1, ease: "power1.inOut" }, 1.0)
-    .to(q(".k-hero"), { yPercent: 0, duration: 2.6, ease: "power2.out" }, 0.35)
+    .to(q(".k-gallery"), { autoAlpha: 1, scale: 1, duration: 1.2, ease: "power2.out" }, 1.0)
     .to(lines[0], { yPercent: 0, duration: 0.9, ease: "power4.out" }, 1.05)
     .to(lines[1], { yPercent: 0, duration: 0.9, ease: "power4.out" }, 1.4)
-    .to(q(".k-hero__silhouette"), { opacity: 0, duration: 0.9, ease: "power2.inOut" }, 2.1)
     .to(q(".k-kana"), { autoAlpha: 1, duration: 0.8, ease: "power1.out" }, 2.5)
     .to(q(".k-credit"), { autoAlpha: 1, duration: 0.6, ease: "power1.out" }, 2.6);
 
   // UNIVERSO
   tl.to(q(".k-pattern"), { autoAlpha: 1, duration: 1.4, ease: "power1.inOut" }, 3.0)
     .to(q(".k-stage"), { scale: 1.04, xPercent: -2, duration: 3.2, ease: "sine.inOut" }, 3.0)
-    .to(q(".k-globe"), { xPercent: 4, duration: 3.2, ease: "sine.inOut" }, 3.0);
+    .to(q(".k-orb"), { xPercent: 4, duration: 3.2, ease: "sine.inOut" }, 3.0);
 
   // IDENTIDADE
   tl.to(q(".k-sign"), { autoAlpha: 0, y: 18, duration: 0.5, ease: "power2.in" }, 6.2)
     .to(q(".k-stage"), { scale: 1.7, xPercent: 0, duration: 1.5, ease: "power3.inOut" }, 6.3)
-    .to(q(".k-globe"), { xPercent: 0, duration: 1.5, ease: "power3.inOut" }, 6.3)
+    .to(q(".k-orb"), { xPercent: 0, duration: 1.5, ease: "power3.inOut" }, 6.3)
     .to(q(".k-stage"), { scale: 1, duration: 1.3, ease: "power3.inOut" }, 8.3);
 
   // KOLLECT YOUR WORLD
@@ -66,10 +63,9 @@ export function buildKollectTimeline(root, { duration = BASE_DURATION, loop = tr
     .to(q(".k-credit"), { autoAlpha: 1, duration: 0.6, ease: "power1.out" }, 10.1);
 
   // Apaga a luz e fecha a volta
-  tl.to(q(".k-hero__silhouette"), { opacity: 1, duration: 0.5, ease: "power2.in" }, 12.0)
-    .to(lines, { yPercent: -105, duration: 0.5, ease: "power2.in", stagger: 0.06 }, 12.05)
+  tl.to(lines, { yPercent: -105, duration: 0.5, ease: "power2.in", stagger: 0.06 }, 12.05)
     .to(q(".k-credit"), { autoAlpha: 0, duration: 0.3 }, 12.05)
-    .to([q(".k-pattern"), q(".k-kana"), q(".k-globe__grid")], { autoAlpha: 0, duration: 0.5 }, 12.1)
+    .to([q(".k-pattern"), q(".k-kana"), q(".k-globe__grid"), q(".k-gallery")], { autoAlpha: 0, duration: 0.5 }, 12.1)
     .to(q(".k-globe__rim"), { strokeDashoffset: -RIM, duration: 0.8, ease: "power2.in" }, 12.1)
     .to(q(".k-fade"), { autoAlpha: 1, duration: 0.5, ease: "power1.in" }, BASE_DURATION - 0.5);
 
@@ -93,6 +89,24 @@ export function startAmbient(root) {
       { x: dir < 0 ? -tile : 0, duration: 16 + (i % 3) * 4, ease: "none", repeat: -1 }
     );
   });
+  // Fotos passando dentro do globo, da direita para a esquerda (o sentido do giro).
+  const photos = q(".k-gallery__img");
+  if (photos.length > 1) {
+    const STEP = 2.4; // tempo de cada foto na tela
+    const reel = gsap.timeline({ repeat: -1 });
+    photos.forEach((img, i) => {
+      const at = i * STEP;
+      reel
+        .fromTo(
+          img,
+          { xPercent: 45, autoAlpha: 0, scale: 1.08 },
+          { xPercent: 0, autoAlpha: 1, scale: 1, duration: 0.9, ease: "power3.out" },
+          at
+        )
+        .to(img, { xPercent: -45, autoAlpha: 0, scale: 0.96, duration: 0.9, ease: "power2.in" }, at + STEP - 0.45);
+    });
+  }
+
   // Globo girando: cada meridiano muda de largura conforme a fase.
   const meridians = q(".k-globe__mer");
   if (meridians.length) {

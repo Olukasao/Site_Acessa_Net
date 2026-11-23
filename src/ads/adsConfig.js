@@ -12,7 +12,6 @@ import AcessaNetAd from "./acessanet/AcessaNetAd";
 import CinematicAd from "./kollect/CinematicAd";
 import ProjectaAd from "./projecta/ProjectaAd";
 import kollectLogo from "./assets/kollect-logo.webp";
-import kollectHead from "./assets/kollect-head.webp";
 import kollectWorld from "./assets/kollect-yourworld.webp";
 import projectaLogo from "./assets/projecta-logo.webp";
 import projectaHome from "./assets/projecta-home.webp";
@@ -28,7 +27,7 @@ export const totalAdSeconds = adSlots.reduce((sum, slot) => sum + slot.seconds, 
 
 // Baixa as imagens enquanto a pessoa ainda preenche o cadastro.
 export function preloadAdAssets() {
-  [acessanetLogo, kollectLogo, kollectHead, kollectWorld, projectaLogo, projectaHome].forEach((src) => {
+  [acessanetLogo, kollectLogo, kollectWorld, projectaLogo, projectaHome].forEach((src) => {
     const img = new Image();
     img.decoding = "async";
     img.src = src;

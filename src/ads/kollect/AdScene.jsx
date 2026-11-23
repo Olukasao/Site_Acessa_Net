@@ -1,5 +1,4 @@
-// Camadas do palco: o globo (o mesmo desenho do "O" de WORLD na assinatura,
-// em escala monumental) e a figure protagonista na frente dele.
+// O palco: o globo (o mesmo desenho do "O" de WORLD na assinatura), em escala monumental.
 
 // Meridianos espaçados igualmente; o giro é simulado mudando a largura de cada
 // elipse (rx = R·|cos φ|) a partir desta fase inicial.
@@ -9,6 +8,19 @@ const PARALLELS = [-0.62, 0, 0.62]; // seno da latitude (≈ -38°, 0°, 38°)
 
 export function meridianRx(phase) {
   return Math.max(0.5, GLOBE_R * Math.abs(Math.cos(phase)));
+}
+
+// Fotos dos produtos passando dentro do globo (recorte circular, por baixo da grade).
+export function GlobeGallery({ photos }) {
+  if (!photos?.length) return null;
+  return (
+    <div className="k-gallery" aria-hidden="true">
+      {photos.map((src, i) => (
+        <img key={src} className="k-gallery__img" src={src} alt="" decoding="async" loading={i < 2 ? "eager" : "lazy"} />
+      ))}
+      <span className="k-gallery__shade" />
+    </div>
+  );
 }
 
 export function Globe() {
@@ -33,20 +45,5 @@ export function Globe() {
       </g>
       <circle className="k-globe__rim" r={GLOBE_R} />
     </svg>
-  );
-}
-
-// Figure em destaque. Com foto de produto (`hero.photo`) usa a foto; sem ela, o
-// mascote. Camadas: preenchimento (fecha olhos e contornos vazados do desenho),
-// a figure e uma cópia preta: a silhueta antes da luz acender.
-export function Hero({ hero }) {
-  const src = hero.photo || hero.mascot;
-  const isMascot = !hero.photo;
-  return (
-    <div className={`k-hero${isMascot ? " is-mascot" : ""}`} role="img" aria-label={hero.alt}>
-      {isMascot ? <span className="k-hero__fill" aria-hidden="true" /> : null}
-      <img className="k-hero__img" src={src} alt="" decoding="async" />
-      <img className="k-hero__silhouette" src={src} alt="" decoding="async" />
-    </div>
   );
 }
