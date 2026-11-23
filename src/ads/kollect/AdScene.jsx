@@ -10,15 +10,14 @@ export function meridianRx(phase) {
   return Math.max(0.5, GLOBE_R * Math.abs(Math.cos(phase)));
 }
 
-// Fotos dos produtos passando dentro do globo (recorte circular, por baixo da grade).
-export function GlobeGallery({ photos }) {
+// Fotos dos produtos, inteiras (4:5), passando dentro do quadro.
+export function PhotoReel({ photos }) {
   if (!photos?.length) return null;
   return (
     <div className="k-gallery" aria-hidden="true">
       {photos.map((src, i) => (
         <img key={src} className="k-gallery__img" src={src} alt="" decoding="async" loading={i < 2 ? "eager" : "lazy"} />
       ))}
-      <span className="k-gallery__shade" />
     </div>
   );
 }

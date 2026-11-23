@@ -20,6 +20,7 @@
   --D: min(calc(var(--kw) * 108), calc(var(--kh) * 52)); /* diâmetro do globo */
   --cx: calc(var(--kw) * 50); /* centro do globo */
   --cy: calc(var(--kh) * 34);
+  --FW: min(calc(var(--kw) * 88), calc(var(--kh) * 46)); /* largura do quadro das fotos */
 
   position: absolute;
   inset: 0;
@@ -126,16 +127,28 @@
   stroke-opacity: 0.36;
 }
 
-/* ---------- Fotos dentro do globo ---------- */
-.k-gallery {
+/* ---------- Quadro das fotos (4:5, no lugar do globo) ---------- */
+.k-frame {
   position: absolute;
-  z-index: 0;
-  inset: 2%;
-  border-radius: 50%;
+  z-index: 2;
+  left: calc(var(--cx) - var(--FW) / 2);
+  top: calc(var(--cy) - var(--FW) * 0.625);
+  width: var(--FW);
+  height: calc(var(--FW) * 1.25);
+  border-radius: var(--frx, 6px) / var(--fry, 6px);
   overflow: hidden;
   background: var(--k-ground);
-  transform: translateZ(0); /* recorte circular estável no Safari */
-  will-change: transform, opacity;
+  box-shadow:
+    0 0 0 2px rgba(243, 241, 236, 0.92),
+    0 30px 80px rgba(0, 0, 0, 0.55);
+  will-change: transform;
+}
+
+.k-gallery {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
 }
 
 .k-gallery__img {
@@ -148,32 +161,14 @@
   will-change: transform, opacity;
 }
 
-/* Sem animação, fica a primeira foto. */
+/* Sem animação, fica a primeira foto no quadro (e o globo some). */
 .k-gallery__img:first-child {
   opacity: 1;
 }
 
-/* Sombra nas bordas: a foto ganha volume de esfera. */
-.k-gallery__shade {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: radial-gradient(circle at 38% 32%, transparent 45%, rgba(0, 0, 0, 0.55) 100%);
-  pointer-events: none;
-}
-
-/* Com fotos, o globo fica vazado (sem corpo sólido) e a grade mais discreta. */
-.has-photos .k-globe__body,
-.has-photos .k-globe circle[fill^="url"] {
-  display: none;
-}
-
-.has-photos .k-globe__mer {
-  stroke-opacity: 0.32;
-}
-
-.has-photos .k-globe__lat {
-  stroke-opacity: 0.24;
+.has-photos .k-orb {
+  opacity: 0;
+  visibility: hidden;
 }
 
 /* ---------- Katakana vertical ---------- */
@@ -293,6 +288,7 @@
     --D: calc(var(--kh) * 78);
     --cx: calc(var(--kw) * 69);
     --cy: calc(var(--kh) * 46);
+    --FW: calc(var(--kh) * 64);
   }
 
   .k-pattern__row {
@@ -326,6 +322,7 @@
 @media (max-height: 740px) and (max-aspect-ratio: 1/1) {
   .k-ad {
     --cy: calc(var(--kh) * 32);
+    --FW: min(calc(var(--kw) * 88), calc(var(--kh) * 40));
   }
 
   .k-sign {
@@ -348,6 +345,7 @@
     --D: calc(var(--kh) * 74);
     --cx: calc(var(--kw) * 68);
     --cy: calc(var(--kh) * 42);
+    --FW: calc(var(--kh) * 58);
   }
 
   .k-sign {

@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import { useAdTimeline } from "../useAdTimeline";
-import { Globe, GlobeGallery } from "./AdScene";
+import { Globe, PhotoReel } from "./AdScene";
 import BrandLogo from "./BrandLogo";
 import AdCTA from "./AdCTA";
 import { kollectConfig } from "./config";
@@ -10,6 +10,7 @@ import "./styles.css";
 const PATTERN_ROWS = 10;
 
 // "KOLLECT YOUR WORLD": um plano-sequência numa única viewport.
+// O globo se desenha, vira o quadro das fotos (4:5) e no fim volta a ser globo.
 // Revelação (o globo se desenha) -> Universo (o padrão da marca ganha vida)
 // -> KOLLECT YOUR WORLD (key visual). Sem zoom: o globo mantém o tamanho.
 // O CSS sozinho já desenha o key visual final: é o fallback estático.
@@ -63,9 +64,13 @@ export default function CinematicAd({ active = true, duration, reduced = false, 
 
       <div className="k-stage">
         <div className="k-orb">
-          <GlobeGallery photos={assets.photos} />
           <Globe />
         </div>
+        {assets.photos?.length ? (
+          <div className="k-frame">
+            <PhotoReel photos={assets.photos} />
+          </div>
+        ) : null}
       </div>
 
       <p className="k-kana" lang="ja" aria-hidden="true">
