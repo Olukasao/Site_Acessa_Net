@@ -26,8 +26,5 @@ export const kollectConfig = {
     line: "#F3F1EC", // linhas do globo
   },
 
-  // Botões. Desligados no portal do Wi-Fi: antes do login o celular não abre
-  // outro site. Só aparecem com `show: true` E um `href` preenchido (sem link inventado).
-  cta: { show: false, label: "Conheça a Kollect", href: "" },
-  instagram: { show: false, label: "Instagram", href: "" },
+  // Links (Instagram, Site) ficam em src/ads/adsConfig.js, junto com as outras marcas.
 };

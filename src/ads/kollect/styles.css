@@ -225,53 +225,6 @@
   color: rgba(243, 241, 236, 0.66);
 }
 
-/* ---------- Botões (só com link configurado) ---------- */
-.k-cta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: clamp(14px, calc(var(--kh) * 2.2), 22px);
-}
-
-.k-cta a {
-  display: inline-flex;
-  align-items: center;
-  min-height: 46px;
-  padding: 0 22px;
-  border-radius: 999px;
-  font-weight: 700;
-  font-size: 0.92rem;
-  text-decoration: none;
-  transition: transform 0.15s ease, background-color 0.2s ease, color 0.2s ease;
-}
-
-.k-cta__main {
-  background: var(--k-paper);
-  color: var(--k-ground);
-}
-
-.k-cta__alt {
-  border: 1px solid rgba(243, 241, 236, 0.4);
-  color: var(--k-paper);
-}
-
-.k-cta__main:hover {
-  background: #ffffff;
-}
-
-.k-cta__alt:hover {
-  border-color: var(--k-paper);
-}
-
-.k-cta a:active {
-  transform: scale(0.97);
-}
-
-.k-cta a:focus-visible {
-  outline: 2px solid var(--k-paper);
-  outline-offset: 3px;
-}
-
 .k-fade {
   position: absolute;
   inset: 0;

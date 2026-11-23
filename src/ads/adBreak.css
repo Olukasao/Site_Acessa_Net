@@ -1,7 +1,7 @@
 /* Palco em tela cheia da espera do Wi-Fi: uma viewport, sem rolagem. */
 .adbreak {
   /* Espaço reservado embaixo para a barra de contagem; os anúncios respeitam. */
-  --ad-hud-space: calc(92px + env(safe-area-inset-bottom));
+  --ad-hud-space: calc(100px + env(safe-area-inset-bottom));
   position: fixed;
   inset: 0;
   z-index: 1000;
@@ -66,13 +66,86 @@
   font-family: var(--font-body);
 }
 
+.adbreak__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+}
+
 .adbreak__hud p {
   margin: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.92rem;
+  min-width: 0;
+  font-size: 0.9rem;
+  line-height: 1.25;
   color: rgba(255, 255, 255, 0.85);
+}
+
+.adbreak__links {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.adbreak__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.adbreak__link svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+}
+
+.adbreak__link:active {
+  transform: scale(0.96);
+}
+
+.adbreak__link.is-on {
+  background: #fff;
+  border-color: #fff;
+  color: #04081a;
+}
+
+.adbreak__link:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* Telas estreitas: só o ícone (o nome continua para leitor de tela). */
+@media (max-width: 380px) {
+  .adbreak__link {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .adbreak__link span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
 }
 
 .adbreak__hud strong {

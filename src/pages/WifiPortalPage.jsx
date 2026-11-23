@@ -116,13 +116,25 @@ export default function WifiPortalPage() {
         {state === "ads" ? (
           <Suspense fallback={<div className="wifi-status" role="status"><span className="wifi-spinner" aria-hidden="true" /></div>}>
             <WifiAdBreak
-              onDone={() => {
+              onDone={(destination) => {
                 if (!redirectUrl) {
                   setState("done");
                   return;
                 }
+                // Tocou em Instagram/Site de uma marca: depois de conectar, o roteador
+                // leva para esse link em vez do site que a pessoa tentou abrir.
+                let target = redirectUrl;
+                if (destination) {
+                  try {
+                    const url = new URL(redirectUrl);
+                    url.searchParams.set("redirect", destination);
+                    target = url.toString();
+                  } catch {
+                    target = redirectUrl;
+                  }
+                }
                 setState("connecting");
-                window.location.assign(redirectUrl);
+                window.location.assign(target);
               }}
             />
           </Suspense>

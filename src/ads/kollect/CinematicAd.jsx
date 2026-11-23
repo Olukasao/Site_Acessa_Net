@@ -2,7 +2,6 @@ import { useLayoutEffect, useRef } from "react";
 import { useAdTimeline } from "../useAdTimeline";
 import { Globe, PhotoReel } from "./AdScene";
 import BrandLogo from "./BrandLogo";
-import AdCTA from "./AdCTA";
 import { kollectConfig } from "./config";
 import { buildKollectTimeline, startAmbient } from "./cinematicTimeline";
 import "./styles.css";
@@ -80,7 +79,6 @@ export default function CinematicAd({ active = true, duration, reduced = false, 
       <div className="k-sign">
         <BrandLogo logo={assets.logo} yourWorld={assets.yourWorld} label={texts.signature} />
         <p className="k-credit">{texts.credit}</p>
-        <AdCTA cta={config.cta} instagram={config.instagram} />
       </div>
 
       <div className="k-fade" aria-hidden="true" />

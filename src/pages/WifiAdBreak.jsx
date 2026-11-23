@@ -4,7 +4,8 @@ import { adSlots as allSlots } from "../ads/adsConfig";
 import "../ads/adBreak.css";
 
 // Tela entre o cadastro e a liberação: cada marca de adsConfig.js passa em tela
-// cheia, na sua vez. Ao fim de todas, libera sozinha (onDone).
+// cheia, na sua vez. Ao fim de todas, libera sozinha: onDone(destino), onde destino
+// é o link que a pessoa tocou (Instagram/Site da marca) ou null.
 // O tempo é medido pelo relógio (Date.now), não por contagem de ticks: se o
 // aparelho atrasar os timers, a liberação não atrasa junto.
 // Na prévia (?previa=anuncios&marca=kollect) dá para ver uma marca só.
@@ -15,12 +16,38 @@ function pickSlots() {
   return picked.length ? picked : allSlots;
 }
 
+function LinkIcon({ kind, on }) {
+  if (on) {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 12.5l4.2 4.2L19 7" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "instagram") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3.5" y="3.5" width="17" height="17" rx="5" fill="none" stroke="currentColor" strokeWidth="2" />
+        <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" strokeWidth="2" />
+        <circle cx="17.2" cy="6.8" r="1.2" fill="currentColor" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M3.5 12h17M12 3.5c2.6 2.4 3.8 5.3 3.8 8.5s-1.2 6.1-3.8 8.5c-2.6-2.4-3.8-5.3-3.8-8.5S9.4 5.9 12 3.5z" fill="none" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
 export default function WifiAdBreak({ onDone }) {
   const [adSlots] = useState(pickSlots);
   const totalAdSeconds = useMemo(() => adSlots.reduce((sum, slot) => sum + slot.seconds, 0), [adSlots]);
   const startRef = useRef(Date.now());
   const doneRef = useRef(false);
   const [elapsed, setElapsed] = useState(0);
+  const [chosen, setChosen] = useState(null); // { href, label, brand }
   const [reduced] = useState(
     () => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
@@ -56,15 +83,21 @@ export default function WifiAdBreak({ onDone }) {
   useEffect(() => {
     if (ready && !doneRef.current) {
       doneRef.current = true;
-      onDone();
+      onDone(chosen?.href || null);
     }
-  }, [ready, onDone]);
+  }, [ready, onDone, chosen]);
 
   let current = 0;
   starts.forEach((at, i) => {
     if (elapsed >= at) current = i;
   });
   const left = Math.max(0, Math.ceil(totalAdSeconds - elapsed));
+  const slot = adSlots[current];
+  const links = (slot.links || []).filter((link) => link.href);
+
+  const choose = (link) => {
+    setChosen((prev) => (prev?.href === link.href ? null : { href: link.href, label: link.label, brand: slot.name }));
+  };
 
   return createPortal(
     <div className="adbreak" role="dialog" aria-modal="true" aria-label="Publicidade antes da liberação do Wi-Fi">
@@ -94,16 +127,42 @@ export default function WifiAdBreak({ onDone }) {
             );
           })}
         </div>
-        <p>
-          <span className="adbreak__check" aria-hidden="true">✓</span>
-          {ready ? (
-            "Liberando sua internet…"
-          ) : (
-            <>
-              Cadastro feito! Internet liberada em <strong>{left}s</strong>
-            </>
-          )}
-        </p>
+        <div className="adbreak__row">
+          <p>
+            <span className="adbreak__check" aria-hidden="true">✓</span>
+            {ready ? (
+              chosen ? `Abrindo ${chosen.label} da ${chosen.brand}…` : "Liberando sua internet…"
+            ) : chosen ? (
+              <span>
+                {chosen.label} abre em <strong>{left}s</strong>
+              </span>
+            ) : (
+              <span>
+                Internet liberada em <strong>{left}s</strong>
+              </span>
+            )}
+          </p>
+          {links.length && !ready ? (
+            <div className="adbreak__links">
+              {links.map((link) => {
+                const on = chosen?.href === link.href;
+                return (
+                  <button
+                    key={link.kind}
+                    type="button"
+                    className={`adbreak__link${on ? " is-on" : ""}`}
+                    aria-pressed={on}
+                    aria-label={`${link.label} da ${slot.name}: abre assim que a internet liberar`}
+                    onClick={() => choose(link)}
+                  >
+                    <LinkIcon kind={link.kind} on={on} />
+                    <span>{link.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>,
     document.body
