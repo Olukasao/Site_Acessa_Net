@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import { useAdTimeline } from "../useAdTimeline";
-import { Hero, World } from "./AdScene";
+import { Globe, Hero } from "./AdScene";
 import BrandLogo from "./BrandLogo";
 import AdCTA from "./AdCTA";
 import { kollectConfig } from "./config";
@@ -10,7 +10,7 @@ import "./styles.css";
 const PATTERN_ROWS = 10;
 
 // "KOLLECT YOUR WORLD": um plano-sequência numa única viewport.
-// Revelação (silhueta contra o mundo) -> Universo (o padrão da marca ganha vida)
+// Revelação (o globo se desenha, a figure surge em silhueta) -> Universo (o padrão da marca ganha vida)
 // -> Identidade (a câmera entra nos olhos) -> KOLLECT YOUR WORLD (key visual).
 // O CSS sozinho já desenha o key visual final: é o fallback estático.
 export default function CinematicAd({ active = true, duration, reduced = false, config = kollectConfig }) {
@@ -49,7 +49,7 @@ export default function CinematicAd({ active = true, duration, reduced = false, 
         "--k-ground": colors.ground,
         "--k-pattern": colors.pattern,
         "--k-paper": colors.paper,
-        "--k-world": colors.world,
+        "--k-line": colors.line,
         "--k-pattern-img": `url(${assets.logo})`,
       }}
     >
@@ -62,7 +62,7 @@ export default function CinematicAd({ active = true, duration, reduced = false, 
       </div>
 
       <div className="k-stage">
-        <World />
+        <Globe />
         <Hero hero={assets.hero} />
       </div>
 

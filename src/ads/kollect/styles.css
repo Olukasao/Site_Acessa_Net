@@ -1,7 +1,7 @@
 /* KOLLECT YOUR WORLD
    Direção: pôster de cultura pop japonesa / campanha editorial.
-   Um único gesto forte: o "mundo" (disco vermelho chapado) com a figure
-   monumental na frente. O resto é silencioso: chão carvão com o padrão da
+   Um único gesto forte: o globo de linhas (o "O" de WORLD da assinatura)
+   em escala monumental, com a figure na frente. O resto é silencioso: chão carvão com o padrão da
    marca em tom sobre tom (o mesmo do key visual oficial), assinatura oficial
    alinhada à esquerda, katakana vertical.
    O CSS desenha o KEY VISUAL FINAL; a timeline anima a partir dele. */
@@ -10,15 +10,15 @@
   --k-ground: #1f1f20;
   --k-pattern: #f3f1ec;
   --k-paper: #f3f1ec;
-  --k-world: #e21b2d;
+  --k-line: #f3f1ec;
   --kh: 1vh;
   --kw: 1vw;
   --k-top: max(16px, env(safe-area-inset-top));
   --k-bottom: var(--ad-hud-space, max(24px, env(safe-area-inset-bottom)));
 
   /* Composição vertical (principal) */
-  --D: min(calc(var(--kw) * 108), calc(var(--kh) * 52)); /* diâmetro do mundo */
-  --cx: calc(var(--kw) * 50); /* centro do mundo e da figure */
+  --D: min(calc(var(--kw) * 108), calc(var(--kh) * 52)); /* diâmetro do globo */
+  --cx: calc(var(--kw) * 50); /* centro do globo e da figure */
   --cy: calc(var(--kh) * 34);
   --W: min(calc(var(--kw) * 80), calc(var(--kh) * 40)); /* largura da figure */
   --H: calc(var(--W) * 0.906);
@@ -68,7 +68,7 @@
   will-change: transform;
 }
 
-/* ---------- Palco: mundo + figure ---------- */
+/* ---------- Palco: globo + figure ---------- */
 .k-stage {
   position: absolute;
   inset: 0;
@@ -77,39 +77,50 @@
   will-change: transform;
 }
 
-.k-world {
+/* Globo: o mesmo desenho do "O" de WORLD, em escala monumental.
+   Traço fino e constante (não escala com a câmera). */
+.k-globe {
   position: absolute;
   z-index: 1;
   left: calc(var(--cx) - var(--D) / 2);
   top: calc(var(--cy) - var(--D) / 2);
   width: var(--D);
   height: var(--D);
-  border-radius: 50%;
-  /* chapado, só um volume discreto vindo da mesma luz da figure */
-  background: radial-gradient(circle at 34% 30%, #ea2637 0%, var(--k-world) 48%, #c9172a 100%);
+  overflow: visible;
+  color: var(--k-line);
   will-change: transform;
 }
 
-.k-orbit {
-  position: absolute;
-  z-index: 0;
-  left: calc(var(--cx) - var(--D) * 0.78);
-  top: calc(var(--cy) - var(--D) * 0.2);
-  width: calc(var(--D) * 1.56);
-  height: calc(var(--D) * 0.4);
-  border: 1px solid rgba(243, 241, 236, 0.28);
-  border-radius: 50%;
-  transform: rotate(-12deg);
+.k-globe ellipse,
+.k-globe__rim {
+  fill: none;
+  stroke: currentColor;
 }
 
-.k-orbit__moon {
-  position: absolute;
-  left: -5px;
-  top: -5px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--k-paper);
+/* Linhas internas: traço fino constante, mesmo com a câmera aproximando. */
+.k-globe ellipse {
+  vector-effect: non-scaling-stroke;
+}
+
+/* Contorno: em unidades do desenho (o traço que se desenha depende disso). */
+.k-globe__rim {
+  stroke-width: 1.15;
+  stroke-linecap: round;
+}
+
+/* Corpo sólido: o padrão do fundo não atravessa o globo. */
+.k-globe__body {
+  fill: var(--k-ground);
+}
+
+.k-globe__mer {
+  stroke-width: 1.5px;
+  stroke-opacity: 0.5;
+}
+
+.k-globe__lat {
+  stroke-width: 1.5px;
+  stroke-opacity: 0.36;
 }
 
 .k-hero {
@@ -130,15 +141,8 @@
   object-fit: contain;
 }
 
-/* Sombra projetada no mundo: luz alta, vinda da esquerda. */
-.k-hero__shadow {
-  filter: brightness(0);
-  opacity: 0.26;
-  transform: translate(5%, 4%);
-}
-
 /* Fecha os vazados do desenho (olhos, contornos) com a cor do chão,
-   como na logo original: sem isso o vermelho apareceria pelos olhos. */
+   como na logo original: sem isso as linhas do globo apareceriam pelos olhos. */
 .k-hero__fill {
   position: absolute;
   inset: 20% 9% 4%;
@@ -235,9 +239,12 @@
   color: var(--k-paper);
 }
 
-.k-cta a:hover {
-  background: var(--k-world);
-  color: var(--k-paper);
+.k-cta__main:hover {
+  background: #ffffff;
+}
+
+.k-cta__alt:hover {
+  border-color: var(--k-paper);
 }
 
 .k-cta a:active {
@@ -259,7 +266,7 @@
   visibility: hidden;
 }
 
-/* ---------- Horizontal: o mundo à direita, a assinatura à esquerda ---------- */
+/* ---------- Horizontal: o globo à direita, a assinatura à esquerda ---------- */
 @media (min-width: 820px) and (min-aspect-ratio: 1/1) {
   .k-ad {
     --D: calc(var(--kh) * 78);

@@ -23,7 +23,7 @@ export const kollectConfig = {
     ground: "#1F1F20",
     pattern: "#F3F1EC",
     paper: "#F3F1EC",
-    world: "#E21B2D",
+    line: "#F3F1EC", // linhas do globo
   },
 
   // Botões. Desligados no portal do Wi-Fi: antes do login o celular não abre
