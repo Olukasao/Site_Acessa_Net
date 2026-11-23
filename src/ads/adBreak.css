@@ -190,6 +190,15 @@
   --g-on-text: #fff;
 }
 
+.adbreak__links[data-brand="anuncie"] {
+  --g-bg: rgba(20, 20, 20, 0.1);
+  --g-line: rgba(20, 20, 20, 0.55);
+  --g-text: #141414;
+  --g-icon: #141414;
+  --g-on-bg: #141414;
+  --g-on-text: #ffd23f;
+}
+
 @keyframes adbreak-links-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }

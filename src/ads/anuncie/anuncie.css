@@ -1,0 +1,136 @@
+/* "Anuncie aqui": placa amarela, tinta preta. CSS desenha o quadro final. */
+.n-ad {
+  --n-yellow: #ffd23f;
+  --n-ink: #141414;
+  --n-safe-top: max(18px, env(safe-area-inset-top));
+  --n-safe-bottom: var(--ad-hud-space, max(24px, env(safe-area-inset-bottom)));
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(18px, 4vh, 40px);
+  padding: calc(var(--n-safe-top) + 28px) 22px var(--n-safe-bottom);
+  background:
+    repeating-linear-gradient(135deg, rgba(20, 20, 20, 0.045) 0 22px, transparent 22px 44px),
+    var(--n-yellow);
+  color: var(--n-ink);
+  font-family: var(--font-display);
+  text-align: center;
+  isolation: isolate;
+}
+
+.n-ad * {
+  box-sizing: border-box;
+}
+
+/* O espaço vago: o próprio anúncio esperando a marca de alguém. */
+.n-slot {
+  display: grid;
+  place-items: center;
+  width: min(84vw, 34vh, 420px);
+  aspect-ratio: 8 / 5;
+  border: 3px dashed var(--n-ink);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.35);
+  will-change: transform, opacity;
+}
+
+/* Safari antigo sem aspect-ratio */
+@supports not (aspect-ratio: 1) {
+  .n-slot {
+    height: calc(min(84vw, 34vh, 420px) * 0.625);
+  }
+}
+
+.n-slot__label {
+  font-weight: 800;
+  font-size: clamp(1rem, 4.6vw, 1.5rem);
+  letter-spacing: 0.08em;
+  margin-right: -0.08em;
+}
+
+.n-copy {
+  display: grid;
+  gap: clamp(12px, 2.4vh, 22px);
+  justify-items: center;
+}
+
+.n-title {
+  margin: 0;
+  max-width: 12ch;
+  font-weight: 800;
+  font-size: clamp(2.1rem, 10.5vw, 4.8rem);
+  line-height: 0.98;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.n-stat {
+  margin: 0;
+  display: grid;
+  justify-items: center;
+  line-height: 0.9;
+  padding: 14px 22px 16px;
+  border-radius: 16px;
+  background: var(--n-ink);
+  color: var(--n-yellow);
+  will-change: transform, opacity;
+}
+
+.n-stat__plus {
+  font-weight: 800;
+  font-size: clamp(0.9rem, 3.6vw, 1.2rem);
+  letter-spacing: 0.1em;
+}
+
+.n-num {
+  font-weight: 800;
+  font-size: clamp(3.2rem, 17vw, 6.4rem);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.n-stat__label {
+  font-weight: 800;
+  font-size: clamp(0.85rem, 3.6vw, 1.2rem);
+  letter-spacing: 0.08em;
+  margin-top: 4px;
+}
+
+/* Horizontal: espaço vago à esquerda, recado à direita. */
+@media (min-width: 820px) and (min-aspect-ratio: 1/1) {
+  .n-ad {
+    flex-direction: row;
+    gap: 6vw;
+    text-align: left;
+  }
+
+  .n-slot {
+    width: min(38vw, 56vh, 560px);
+  }
+
+  .n-copy {
+    justify-items: start;
+  }
+
+  .n-stat {
+    justify-items: start;
+  }
+}
+
+@media (max-height: 700px) and (max-aspect-ratio: 1/1) {
+  .n-slot {
+    width: min(70vw, 26vh);
+  }
+
+  .n-title {
+    font-size: clamp(1.8rem, 9vw, 3rem);
+  }
+
+  .n-num {
+    font-size: clamp(2.6rem, 13vw, 4rem);
+  }
+}

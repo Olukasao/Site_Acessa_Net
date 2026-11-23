@@ -13,6 +13,7 @@
 import AcessaNetAd from "./acessanet/AcessaNetAd";
 import CinematicAd from "./kollect/CinematicAd";
 import ProjectaAd from "./projecta/ProjectaAd";
+import AnuncieAd from "./anuncie/AnuncieAd";
 import kollectLogo from "./assets/kollect-logo.webp";
 import kollectWorld from "./assets/kollect-yourworld.webp";
 import projectaLogo from "./assets/projecta-logo.webp";
@@ -58,6 +59,17 @@ export const adSlots = [
       { kind: "instagram", label: "Instagram", goes: "o Instagram da Projecta", href: "https://www.instagram.com/projectaempreendimentos/" },
       // Número do WhatsApp que está no site da própria Projecta.
       { kind: "whatsapp", label: "WhatsApp", goes: "o WhatsApp da Projecta", href: "https://wa.me/5511993878619" },
+    ],
+  },
+  {
+    // Venda do próprio espaço: sempre o último.
+    id: "anuncie",
+    name: "Anuncie aqui",
+    seconds: 7,
+    Component: AnuncieAd,
+    links: [
+      // Contato para quem quer anunciar: preencher com o WhatsApp/link certo.
+      { kind: "whatsapp", label: "Quero anunciar", goes: "o contato para anunciar", href: "" },
     ],
   },
 ];
