@@ -14,7 +14,7 @@ export const kollectConfig = {
   texts: {
     // Lido por leitores de tela (a assinatura em si é a imagem oficial).
     signature: "KOLLECT YOUR WORLD.",
-    credit: "Action figures, estátuas e colecionáveis de anime.",
+    credit: "Action figures, estátuas, colecionáveis e peças 3D personalizadas.",
     // Coluna vertical em katakana: "Kollect your world".
     katakana: "コレクト・ユア・ワールド",
   },

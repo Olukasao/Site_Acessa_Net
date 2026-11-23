@@ -19,8 +19,8 @@
   /* Composição vertical (principal) */
   --D: min(calc(var(--kw) * 108), calc(var(--kh) * 52)); /* diâmetro do globo */
   --cx: calc(var(--kw) * 50); /* centro do globo */
-  --cy: calc(var(--kh) * 34);
-  --FW: min(calc(var(--kw) * 88), calc(var(--kh) * 46)); /* largura do quadro das fotos */
+  --cy: calc(var(--kh) * 31);
+  --FW: min(calc(var(--kw) * 84), calc(var(--kh) * 42)); /* largura do quadro das fotos */
 
   position: absolute;
   inset: 0;
@@ -193,7 +193,7 @@
   z-index: 4;
   left: calc(var(--kw) * 6);
   right: calc(var(--kw) * 6);
-  top: calc(var(--kh) * 64.5);
+  top: calc(var(--kh) * 59);
 }
 
 .k-lockup {
@@ -238,10 +238,10 @@
 /* ---------- Horizontal: o globo à direita, a assinatura à esquerda ---------- */
 @media (min-width: 820px) and (min-aspect-ratio: 1/1) {
   .k-ad {
-    --D: calc(var(--kh) * 78);
+    --D: calc(var(--kh) * 74);
     --cx: calc(var(--kw) * 69);
-    --cy: calc(var(--kh) * 46);
-    --FW: calc(var(--kh) * 64);
+    --cy: calc(var(--kh) * 44);
+    --FW: calc(var(--kh) * 58);
   }
 
   .k-pattern__row {
@@ -274,21 +274,21 @@
    para a legenda não encostar na barra de contagem. */
 @media (max-height: 740px) and (max-aspect-ratio: 1/1) {
   .k-ad {
-    --cy: calc(var(--kh) * 32);
-    --FW: min(calc(var(--kw) * 88), calc(var(--kh) * 40));
+    --cy: calc(var(--kh) * 29);
+    --D: min(calc(var(--kw) * 100), calc(var(--kh) * 46));
+    --FW: min(calc(var(--kw) * 88), calc(var(--kh) * 36));
   }
 
   .k-sign {
-    top: calc(var(--kh) * 60.5);
+    top: calc(var(--kh) * 55);
   }
 
   .k-lockup {
-    width: min(calc(var(--kw) * 88), calc(var(--kh) * 45));
+    width: min(calc(var(--kw) * 88), calc(var(--kh) * 42));
   }
 
   .k-credit {
-    max-width: none;
-    font-size: 0.8rem;
+    display: none;
   }
 }
 

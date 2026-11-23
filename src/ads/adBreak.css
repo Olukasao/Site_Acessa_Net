@@ -66,53 +66,81 @@
   font-family: var(--font-body);
 }
 
-.adbreak__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 40px;
-}
-
 .adbreak__hud p {
   margin: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 0;
   font-size: 0.9rem;
-  line-height: 1.25;
+  line-height: 1.3;
   color: rgba(255, 255, 255, 0.85);
 }
 
+/* ---------- Botões da marca (fora da caixa, efeito vidro) ---------- */
+.adbreak.has-links {
+  /* barra + fileira de botões */
+  --ad-hud-space: calc(150px + env(safe-area-inset-bottom));
+}
+
 .adbreak__links {
+  --g-bg: rgba(255, 255, 255, 0.12);
+  --g-line: rgba(255, 255, 255, 0.32);
+  --g-text: #fff;
+  --g-icon: #fff;
+  --g-on-bg: #fff;
+  --g-on-text: #04081a;
+  position: absolute;
+  z-index: 20;
+  left: 12px;
+  right: 12px;
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 76px);
+  max-width: 520px;
+  margin: 0 auto;
   display: flex;
-  flex: none;
-  gap: 6px;
+  justify-content: center;
+  gap: 8px;
+  animation: adbreak-links-in 0.5s ease-out;
 }
 
 .adbreak__link {
+  flex: 1 1 0;
+  max-width: 168px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 46px;
+  padding: 0 10px;
+  border: 1px solid var(--g-line);
   border-radius: 999px;
-  background: transparent;
-  color: #fff;
+  background: var(--g-bg);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 8px 24px rgba(0, 0, 0, 0.22);
+  color: var(--g-text);
   font: inherit;
-  font-size: 0.85rem;
+  font-family: var(--font-body);
+  font-size: 0.84rem;
   font-weight: 700;
+  white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
   -webkit-tap-highlight-color: transparent;
+}
+
+.adbreak__link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .adbreak__link svg {
   width: 17px;
   height: 17px;
   flex: none;
+  color: var(--g-icon);
 }
 
 .adbreak__link:active {
@@ -120,31 +148,64 @@
 }
 
 .adbreak__link.is-on {
-  background: #fff;
-  border-color: #fff;
-  color: #04081a;
+  background: var(--g-on-bg);
+  border-color: var(--g-on-bg);
+  color: var(--g-on-text);
+}
+
+.adbreak__link.is-on svg {
+  color: currentColor;
 }
 
 .adbreak__link:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 2px;
+  outline: 2px solid var(--g-text);
+  outline-offset: 3px;
 }
 
-/* Telas estreitas: só o ícone (o nome continua para leitor de tela). */
-@media (max-width: 380px) {
-  .adbreak__link {
-    width: 40px;
-    padding: 0;
-    justify-content: center;
-  }
+/* Cada marca com o seu vidro */
+.adbreak__links[data-brand="acessanet"] {
+  --g-bg: rgba(16, 34, 74, 0.42);
+  --g-line: rgba(58, 214, 255, 0.5);
+  --g-text: #eef3ff;
+  --g-icon: #3ad6ff;
+  --g-on-bg: #3ad6ff;
+  --g-on-text: #030716;
+}
 
-  .adbreak__link span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
+.adbreak__links[data-brand="kollect"] {
+  --g-bg: rgba(243, 241, 236, 0.08);
+  --g-line: rgba(243, 241, 236, 0.34);
+  --g-text: #f3f1ec;
+  --g-icon: #f3f1ec;
+  --g-on-bg: #f3f1ec;
+  --g-on-text: #1f1f20;
+}
+
+.adbreak__links[data-brand="projecta"] {
+  --g-bg: rgba(255, 255, 255, 0.55);
+  --g-line: rgba(229, 158, 31, 0.65);
+  --g-text: #3d3d3d;
+  --g-icon: #e59e1f;
+  --g-on-bg: #e59e1f;
+  --g-on-text: #fff;
+}
+
+@keyframes adbreak-links-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 360px) {
+  .adbreak__link {
+    font-size: 0.78rem;
+    gap: 5px;
+    padding: 0 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adbreak__links {
+    animation: none;
   }
 }
 

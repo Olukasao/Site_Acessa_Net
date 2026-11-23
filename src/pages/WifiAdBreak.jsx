@@ -33,6 +33,21 @@ function LinkIcon({ kind, on }) {
       </svg>
     );
   }
+  if (kind === "whatsapp") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4.2 19.8l1.1-3.9A8.4 8.4 0 1 1 8.4 19z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+        <path d="M9.2 8.4c.3-.6.6-.6.9-.6.5 0 .7.9 1 1.5.2.4-.5.9-.6 1.2.4 1 1.6 2.2 2.8 2.7.3-.2.8-.9 1.2-.7.6.3 1.4.6 1.4 1 0 .6-.6 1.3-1.4 1.4-2.1.3-6-3.1-5.5-5.5.1-.4.1-.7.2-1z" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (kind === "links") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" strokeWidth="2" />
@@ -96,11 +111,11 @@ export default function WifiAdBreak({ onDone }) {
   const links = (slot.links || []).filter((link) => link.href);
 
   const choose = (link) => {
-    setChosen((prev) => (prev?.href === link.href ? null : { href: link.href, label: link.label, brand: slot.name }));
+    setChosen((prev) => (prev?.href === link.href ? null : { href: link.href, goes: link.goes || link.label }));
   };
 
   return createPortal(
-    <div className="adbreak" role="dialog" aria-modal="true" aria-label="Publicidade antes da liberação do Wi-Fi">
+    <div className={`adbreak${links.length ? " has-links" : ""}`} role="dialog" aria-modal="true" aria-label="Publicidade antes da liberação do Wi-Fi">
       {adSlots.map(({ id, name, seconds, Component }, i) => (
         <section
           key={id}
@@ -116,6 +131,27 @@ export default function WifiAdBreak({ onDone }) {
         Publicidade · {current + 1}/{adSlots.length}
       </span>
 
+      {links.length && !ready ? (
+        <div className="adbreak__links" data-brand={slot.id} key={slot.id}>
+          {links.map((link) => {
+            const on = chosen?.href === link.href;
+            return (
+              <button
+                key={link.kind}
+                type="button"
+                className={`adbreak__link${on ? " is-on" : ""}`}
+                aria-pressed={on}
+                aria-label={`${link.label}: abre ${link.goes} assim que a internet liberar`}
+                onClick={() => choose(link)}
+              >
+                <LinkIcon kind={link.kind} on={on} />
+                <span>{link.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       <div className="adbreak__hud" role="status" aria-live="polite">
         <div className="adbreak__bars" aria-hidden="true">
           {adSlots.map((slot, i) => {
@@ -127,42 +163,20 @@ export default function WifiAdBreak({ onDone }) {
             );
           })}
         </div>
-        <div className="adbreak__row">
-          <p>
-            <span className="adbreak__check" aria-hidden="true">✓</span>
-            {ready ? (
-              chosen ? `Abrindo ${chosen.label} da ${chosen.brand}…` : "Liberando sua internet…"
-            ) : chosen ? (
-              <span>
-                {chosen.label} abre em <strong>{left}s</strong>
-              </span>
-            ) : (
-              <span>
-                Internet liberada em <strong>{left}s</strong>
-              </span>
-            )}
-          </p>
-          {links.length && !ready ? (
-            <div className="adbreak__links">
-              {links.map((link) => {
-                const on = chosen?.href === link.href;
-                return (
-                  <button
-                    key={link.kind}
-                    type="button"
-                    className={`adbreak__link${on ? " is-on" : ""}`}
-                    aria-pressed={on}
-                    aria-label={`${link.label} da ${slot.name}: abre assim que a internet liberar`}
-                    onClick={() => choose(link)}
-                  >
-                    <LinkIcon kind={link.kind} on={on} />
-                    <span>{link.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
+        <p>
+          <span className="adbreak__check" aria-hidden="true">✓</span>
+          {ready ? (
+            chosen ? `Abrindo ${chosen.goes}…` : "Liberando sua internet…"
+          ) : chosen ? (
+            <span>
+              Internet liberada em <strong>{left}s</strong>, depois abre {chosen.goes}
+            </span>
+          ) : (
+            <span>
+              Cadastro feito! Internet liberada em <strong>{left}s</strong>
+            </span>
+          )}
+        </p>
       </div>
     </div>,
     document.body

@@ -4,7 +4,8 @@
 // liberada quando todas passaram: o tempo total de espera é a soma dos `seconds`.
 // Para mudar a ordem, o tempo de cada marca ou tirar uma, edite só esta lista.
 //
-// Botões de cada marca (Instagram, Site): antes do login o celular só alcança este
+// Botões de cada marca: `label` é a ação (curta, cabe no celular) e `goes` diz para
+// onde a pessoa vai, na mensagem da barra. Antes do login o celular só alcança este
 // site, então o clique NÃO abre o link na hora. Ele vira o destino da pessoa depois
 // de conectar: quando a contagem acaba, o roteador libera a internet e manda direto
 // para o link escolhido. Botão com `href` vazio não aparece (nunca inventar link).
@@ -17,6 +18,7 @@ import kollectWorld from "./assets/kollect-yourworld.webp";
 import projectaLogo from "./assets/projecta-logo.webp";
 import projectaHome from "./assets/projecta-home.webp";
 import acessanetLogo from "../assets/logo-acessanet-3d.png";
+import { whatsappLink } from "../data/site";
 
 export const adSlots = [
   {
@@ -25,8 +27,14 @@ export const adSlots = [
     seconds: 10,
     Component: AcessaNetAd,
     links: [
-      { kind: "instagram", label: "Instagram", href: "" },
-      { kind: "site", label: "Site", href: "https://acessanet.com.br/" },
+      {
+        kind: "whatsapp",
+        label: "Contratar",
+        goes: "o WhatsApp da AcessaNet",
+        href: whatsappLink("Olá! Vi o anúncio no Wi-Fi grátis e quero contratar a internet da AcessaNet."),
+      },
+      { kind: "instagram", label: "Instagram", goes: "o Instagram da AcessaNet", href: "https://www.instagram.com/acessanet_/" },
+      { kind: "site", label: "Site", goes: "o site da AcessaNet", href: "https://acessanet.com.br/" },
     ],
   },
   {
@@ -35,8 +43,9 @@ export const adSlots = [
     seconds: 13,
     Component: CinematicAd,
     links: [
-      { kind: "instagram", label: "Instagram", href: "" },
-      { kind: "site", label: "Site", href: "" },
+      { kind: "instagram", label: "Instagram", goes: "o Instagram da Kollect", href: "https://www.instagram.com/kollectbr/" },
+      { kind: "whatsapp", label: "Comprar", goes: "o WhatsApp da Kollect", href: "https://api.whatsapp.com/send?phone=5511932085937" },
+      { kind: "links", label: "Links", goes: "os links da Kollect", href: "https://linktr.ee/KollectBr" },
     ],
   },
   {
@@ -45,8 +54,10 @@ export const adSlots = [
     seconds: 10,
     Component: ProjectaAd,
     links: [
-      { kind: "instagram", label: "Instagram", href: "https://www.instagram.com/projectaempreendimentos/" },
-      { kind: "site", label: "Site", href: "https://projectaempreendimentos.com.br/" },
+      { kind: "site", label: "Imóveis", goes: "o site da Projecta", href: "https://projectaempreendimentos.com.br/" },
+      { kind: "instagram", label: "Instagram", goes: "o Instagram da Projecta", href: "https://www.instagram.com/projectaempreendimentos/" },
+      // Número do WhatsApp que está no site da própria Projecta.
+      { kind: "whatsapp", label: "WhatsApp", goes: "o WhatsApp da Projecta", href: "https://wa.me/5511993878619" },
     ],
   },
 ];
