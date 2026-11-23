@@ -105,6 +105,9 @@ export function startAmbient(root) {
         )
         .to(img, { xPercent: -45, autoAlpha: 0, scale: 0.96, duration: 0.9, ease: "power2.in" }, at + STEP - 0.45);
     });
+    // Em 13 s cabem ~5 fotos: cada visita começa numa foto sorteada, para todas
+    // aparecerem ao longo do dia.
+    reel.seek(Math.floor(Math.random() * photos.length) * STEP);
   }
 
   // Globo girando: cada meridiano muda de largura conforme a fase.

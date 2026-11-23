@@ -4,3 +4,6 @@ dist
 # Backups do deploy (dump do banco com dados de clientes) e build hibrido -- nunca versionar.
 /backups
 /dist-hybrid
+
+# Fotos originais do anúncio da Kollect (o anúncio usa as versões otimizadas)
+src/ads/assets/kollect-fotos/originais/
