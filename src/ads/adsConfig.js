@@ -68,8 +68,13 @@ export const adSlots = [
     seconds: 7,
     Component: AnuncieAd,
     links: [
-      // Contato para quem quer anunciar: preencher com o WhatsApp/link certo.
-      { kind: "whatsapp", label: "Quero anunciar", goes: "o contato para anunciar", href: "" },
+      // Quem quer anunciar fala com o mesmo WhatsApp da AcessaNet.
+      {
+        kind: "whatsapp",
+        label: "Quero anunciar",
+        goes: "o WhatsApp da AcessaNet",
+        href: whatsappLink("Olá! Vi o Wi-Fi grátis da AcessaNet e quero anunciar minha loja/marca nele."),
+      },
     ],
   },
 ];
