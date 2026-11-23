@@ -1,10 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ApiError, postJson } from "../lib/api";
 import { maskPhone, onlyDigits } from "../lib/masks";
 import logo from "../assets/logo-acessanet-3d.png";
 import WifiIntro from "./WifiIntro";
-import WifiAdBreak from "./WifiAdBreak";
+// Os anúncios (GSAP + imagens) só baixam depois que o formulário já está na tela.
+const loadAdBreak = () =>
+  import("./WifiAdBreak").then((mod) => {
+    import("../ads/adsConfig").then((ads) => ads.preloadAdAssets());
+    return mod;
+  });
+const WifiAdBreak = lazy(loadAdBreak);
 import "./wifiPortal.css";
 
 // Captive portal do Wi-Fi público (Grandstream, fluxo "External Captive Portal").
@@ -38,22 +44,26 @@ export default function WifiPortalPage() {
     [params]
   );
   const fromRouter = Boolean(context.loginUrl);
+  // ?previa=anuncios abre direto a tela de anúncios, sem cadastro e sem liberar nada (para conferir).
+  const previewAds = params.get("previa") === "anuncios";
 
   const [form, setForm] = useState({ fullName: "", email: "", phone: "", termsAccepted: false, marketingConsent: false });
   const [errors, setErrors] = useState({});
-  const [state, setState] = useState("form"); // form | sending | ads | connecting | done
+  const [state, setState] = useState(() => (previewAds ? "ads" : "form")); // form | sending | ads | connecting | done
   const [redirectUrl, setRedirectUrl] = useState("");
   const [submitError, setSubmitError] = useState("");
 
   // A marca abre o portal toda vez que a pessoa entra na rede. Com "reduzir movimento",
   // é só a tela estática da logo.
-  const [showIntro, setShowIntro] = useState(true);
+  const [showIntro, setShowIntro] = useState(!previewAds);
   const [staticIntro] = useState(
     () => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
 
   useEffect(() => {
     document.title = "Wi-Fi grátis | AcessaNet";
+    const id = window.setTimeout(() => loadAdBreak().catch(() => {}), 1500);
+    return () => window.clearTimeout(id);
   }, []);
 
   const set = (field, value) => {
@@ -104,12 +114,18 @@ export default function WifiPortalPage() {
         <img className="wifi-logo" src={logo} alt="AcessaNet" width="877" height="327" />
 
         {state === "ads" ? (
-          <WifiAdBreak
-            onDone={() => {
-              setState("connecting");
-              window.location.assign(redirectUrl);
-            }}
-          />
+          <Suspense fallback={<div className="wifi-status" role="status"><span className="wifi-spinner" aria-hidden="true" /></div>}>
+            <WifiAdBreak
+              onDone={() => {
+                if (!redirectUrl) {
+                  setState("done");
+                  return;
+                }
+                setState("connecting");
+                window.location.assign(redirectUrl);
+              }}
+            />
+          </Suspense>
         ) : state === "connecting" ? (
           <div className="wifi-status" role="status" aria-live="polite">
             <span className="wifi-spinner" aria-hidden="true" />

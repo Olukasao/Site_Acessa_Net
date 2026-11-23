@@ -1,0 +1,149 @@
+/* Projecta — visual claro, dourado e grafite (cores do site da marca).
+   CSS desenha o quadro final (cena 3); a timeline revela o resto. */
+.p-ad {
+  --p-cream: #f7f3ec;
+  --p-gold: #e59e1f;
+  --p-gold-2: #f5b942;
+  --p-ink: #3d3d3d;
+  --p-safe-top: max(18px, env(safe-area-inset-top));
+  --p-safe-bottom: var(--ad-hud-space, max(24px, env(safe-area-inset-bottom)));
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(80% 50% at 50% 30%, #fffdf8, transparent 70%),
+    var(--p-cream);
+  color: var(--p-ink);
+  font-family: var(--font-display);
+  isolation: isolate;
+}
+
+.p-ad * {
+  box-sizing: border-box;
+}
+
+.p-scene {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(16px, 3vh, 28px);
+  padding: var(--p-safe-top) 22px var(--p-safe-bottom);
+  text-align: center;
+  opacity: 0;
+  visibility: hidden;
+  will-change: opacity;
+}
+
+.p-scene--s3 {
+  opacity: 1;
+  visibility: visible;
+}
+
+.p-title {
+  margin: 0;
+  font-weight: 800;
+  font-size: clamp(1.9rem, 9vw, 4.6rem);
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+  color: var(--p-ink);
+  text-wrap: balance;
+}
+
+.p-title .is-gold {
+  color: var(--p-gold);
+}
+
+.p-title--sm {
+  font-size: clamp(1.5rem, 7vw, 3rem);
+}
+
+.p-title--light {
+  color: #fff;
+  font-size: clamp(1.8rem, 8.4vw, 4.2rem);
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35);
+}
+
+.p-house {
+  width: min(52vw, 32vh, 300px);
+  height: auto;
+  overflow: visible;
+}
+
+.p-house path {
+  fill: none;
+  stroke: var(--p-gold);
+  stroke-width: 9;
+  stroke-linejoin: miter;
+  stroke-linecap: square;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  filter: drop-shadow(0 8px 18px rgba(229, 158, 31, 0.35));
+}
+
+/* Cena 2: foto em tela cheia com legenda por cima */
+.p-scene--s2 {
+  justify-content: flex-end;
+  padding-bottom: calc(var(--p-safe-bottom) + 4vh);
+}
+
+.p-photo {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #2b2116;
+}
+
+.p-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 30% 55%;
+  will-change: transform;
+}
+
+.p-photo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 30%, rgba(20, 14, 6, 0.82) 88%);
+}
+
+.p-curtain {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(120deg, var(--p-gold), var(--p-gold-2));
+  transform-origin: right center;
+  transform: scaleX(0);
+}
+
+.p-caption {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  max-width: 900px;
+}
+
+.p-sub {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: clamp(1rem, 4.4vw, 1.4rem);
+  font-weight: 600;
+  color: var(--p-gold-2);
+}
+
+/* Cena 3 */
+.p-logo {
+  width: min(80vw, 520px);
+  height: auto;
+}
+
+.p-rule {
+  width: min(40vw, 180px);
+  height: 3px;
+  border-radius: 3px;
+  background: var(--p-gold);
+}

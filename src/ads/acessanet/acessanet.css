@@ -1,0 +1,215 @@
+/* AcessaNet — CSS desenha o quadro final (cena 3); a timeline revela o resto. */
+.a-ad {
+  --a-safe-top: max(18px, env(safe-area-inset-top));
+  --a-safe-bottom: var(--ad-hud-space, max(24px, env(safe-area-inset-bottom)));
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--navy-950, #030716);
+  color: var(--on-dark, #eef3ff);
+  font-family: var(--font-display);
+  isolation: isolate;
+}
+
+.a-ad * {
+  box-sizing: border-box;
+}
+
+.a-bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(90% 55% at 50% 35%, rgba(47, 107, 255, 0.35), transparent 70%),
+    radial-gradient(60% 40% at 80% 90%, rgba(58, 214, 255, 0.18), transparent 70%),
+    var(--navy-950, #030716);
+}
+
+.a-streaks span {
+  position: absolute;
+  left: -32%;
+  width: 30%;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgba(58, 214, 255, 0.9), #fff);
+  box-shadow: 0 0 12px rgba(58, 214, 255, 0.7);
+  opacity: 0.55;
+  will-change: transform;
+}
+
+.a-scene {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 2.6vh, 22px);
+  padding: var(--a-safe-top) 22px var(--a-safe-bottom);
+  text-align: center;
+  opacity: 0;
+  visibility: hidden;
+  will-change: transform, opacity;
+}
+
+.a-scene--s3 {
+  opacity: 1;
+  visibility: visible;
+}
+
+.a-ring {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  width: min(120vw, 900px);
+  height: min(120vw, 900px);
+  margin: calc(min(120vw, 900px) / -2) 0 0 calc(min(120vw, 900px) / -2);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(58, 214, 255, 0.22), rgba(47, 107, 255, 0.1) 45%, transparent 70%);
+  pointer-events: none;
+}
+
+.a-hero-logo {
+  position: relative;
+  width: min(78vw, 520px);
+  height: auto;
+  filter: drop-shadow(0 18px 40px rgba(47, 107, 255, 0.45));
+}
+
+.a-title {
+  position: relative;
+  margin: 0;
+  font-weight: 800;
+  font-size: clamp(1.7rem, 8vw, 4.2rem);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.a-title--sm {
+  font-size: clamp(1.5rem, 7vw, 3.4rem);
+}
+
+.a-tag {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(58, 214, 255, 0.14);
+  border: 1px solid rgba(58, 214, 255, 0.4);
+  color: var(--cyan-300, #8ae8ff);
+}
+
+.a-speed {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 0.85;
+}
+
+.a-num {
+  font-weight: 800;
+  font-size: clamp(6rem, 38vw, 16rem);
+  letter-spacing: -0.05em;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(180deg, #fff 30%, var(--cyan-400, #3ad6ff));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 10px 40px rgba(58, 214, 255, 0.35));
+}
+
+.a-unit {
+  font-weight: 800;
+  font-size: clamp(1.6rem, 9vw, 3.6rem);
+  letter-spacing: 0.3em;
+  margin-right: -0.3em;
+  text-transform: uppercase;
+}
+
+.a-price {
+  margin: 8px 0 0;
+  font-family: var(--font-body);
+  font-size: clamp(1.1rem, 5vw, 1.6rem);
+  color: var(--on-dark-2, rgba(226, 235, 255, 0.72));
+}
+
+.a-price strong {
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 1.35em;
+}
+
+.a-sub {
+  margin: 0;
+  max-width: 30ch;
+  font-family: var(--font-body);
+  color: var(--on-dark-2, rgba(226, 235, 255, 0.72));
+}
+
+.a-mini-logo {
+  width: min(44vw, 240px);
+  height: auto;
+}
+
+.a-perks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  width: min(100%, 420px);
+}
+
+.a-perk {
+  display: grid;
+  gap: 2px;
+  padding: 14px 18px;
+  border-radius: 18px;
+  background: rgba(10, 22, 51, 0.7);
+  border: 1px solid rgba(143, 178, 255, 0.2);
+  text-align: left;
+}
+
+.a-perk strong {
+  font-size: 1.1rem;
+}
+
+.a-perk span {
+  font-family: var(--font-body);
+  color: var(--on-dark-2, rgba(226, 235, 255, 0.72));
+}
+
+.a-phone {
+  margin: 4px 0 0;
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  color: var(--on-dark-2, rgba(226, 235, 255, 0.72));
+}
+
+.a-phone strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: clamp(1.6rem, 7vw, 2.4rem);
+  color: var(--cyan-400, #3ad6ff);
+}
+
+@media (min-width: 820px) and (min-aspect-ratio: 1/1) {
+  .a-perks {
+    grid-template-columns: 1fr 1fr;
+    width: min(100%, 720px);
+  }
+}
+
+@media (max-height: 560px) {
+  .a-num {
+    font-size: clamp(4rem, 26vh, 9rem);
+  }
+
+  .a-mini-logo {
+    display: none;
+  }
+}

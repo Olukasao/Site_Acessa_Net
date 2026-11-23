@@ -1,0 +1,122 @@
+/* Palco em tela cheia da espera do Wi-Fi: uma viewport, sem rolagem. */
+.adbreak {
+  /* Espaço reservado embaixo para a barra de contagem; os anúncios respeitam. */
+  --ad-hud-space: calc(92px + env(safe-area-inset-bottom));
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: #000;
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.adbreak__slot {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.6s ease, visibility 0s linear 0.6s;
+}
+
+.adbreak__slot.is-on {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.6s ease, visibility 0s;
+}
+
+.adbreak__label {
+  position: absolute;
+  z-index: 20;
+  top: max(12px, env(safe-area-inset-top));
+  left: 14px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.85);
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.adbreak__hud {
+  position: absolute;
+  z-index: 20;
+  left: 12px;
+  right: 12px;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  max-width: 520px;
+  margin: 0 auto;
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px 14px;
+  border-radius: 18px;
+  background: rgba(4, 8, 22, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-family: var(--font-body);
+}
+
+.adbreak__hud p {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.adbreak__hud strong {
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.adbreak__check {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #22c55e;
+  color: #04120a;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.adbreak__bars {
+  display: flex;
+  gap: 5px;
+}
+
+.adbreak__bars span {
+  flex: 1;
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+
+.adbreak__bars i {
+  display: block;
+  height: 100%;
+  background: #fff;
+  transform-origin: left center;
+  transition: transform 0.2s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adbreak__slot,
+  .adbreak__slot.is-on {
+    transition: none;
+  }
+}
