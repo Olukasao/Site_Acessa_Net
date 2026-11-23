@@ -11,7 +11,7 @@ const PATTERN_ROWS = 10;
 
 // "KOLLECT YOUR WORLD": um plano-sequência numa única viewport.
 // Revelação (o globo se desenha) -> Universo (o padrão da marca ganha vida)
-// -> Identidade (a câmera mergulha no globo) -> KOLLECT YOUR WORLD (key visual).
+// -> KOLLECT YOUR WORLD (key visual). Sem zoom: o globo mantém o tamanho.
 // O CSS sozinho já desenha o key visual final: é o fallback estático.
 export default function CinematicAd({ active = true, duration, reduced = false, config = kollectConfig }) {
   const root = useRef(null);

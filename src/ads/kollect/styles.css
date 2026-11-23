@@ -69,9 +69,6 @@
 .k-stage {
   position: absolute;
   inset: 0;
-  /* a câmera mergulha no centro do globo */
-  transform-origin: var(--cx) var(--cy);
-  will-change: transform;
 }
 
 /* Globo: o mesmo desenho do "O" de WORLD, em escala monumental.
