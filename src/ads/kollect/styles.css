@@ -1,99 +1,252 @@
-/* KOLLECT — comercial cinematográfico em uma viewport.
-   O CSS desenha o QUADRO FINAL (logo + frase). A timeline esconde e revela o
-   resto; sem animação (reduzir movimento / falha do JS) fica o quadro final. */
+/* KOLLECT YOUR WORLD
+   Direção: pôster de cultura pop japonesa / campanha editorial.
+   Um único gesto forte: o "mundo" (disco vermelho chapado) com a figure
+   monumental na frente. O resto é silencioso: chão carvão com o padrão da
+   marca em tom sobre tom (o mesmo do key visual oficial), assinatura oficial
+   alinhada à esquerda, katakana vertical.
+   O CSS desenha o KEY VISUAL FINAL; a timeline anima a partir dele. */
 
 .k-ad {
-  --k-black: #050505;
-  --k-graphite: #111115;
-  --k-white: #f5f5f5;
-  --k-red: #e21b2d;
-  --k-safe-top: max(18px, env(safe-area-inset-top));
-  --k-safe-bottom: var(--ad-hud-space, max(24px, env(safe-area-inset-bottom)));
+  --k-ground: #1f1f20;
+  --k-pattern: #f3f1ec;
+  --k-paper: #f3f1ec;
+  --k-world: #e21b2d;
+  --kh: 1vh;
+  --kw: 1vw;
+  --k-top: max(16px, env(safe-area-inset-top));
+  --k-bottom: var(--ad-hud-space, max(24px, env(safe-area-inset-bottom)));
+
+  /* Composição vertical (principal) */
+  --D: min(calc(var(--kw) * 108), calc(var(--kh) * 52)); /* diâmetro do mundo */
+  --cx: calc(var(--kw) * 50); /* centro do mundo e da figure */
+  --cy: calc(var(--kh) * 34);
+  --W: min(calc(var(--kw) * 80), calc(var(--kh) * 40)); /* largura da figure */
+  --H: calc(var(--W) * 0.906);
+  --hb: calc(var(--kh) * 61); /* base da figure */
+
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: var(--k-black);
-  color: var(--k-white);
-  font-family: var(--font-display, "Sora Variable", system-ui, sans-serif);
+  background: var(--k-ground);
+  color: var(--k-paper);
+  font-family: var(--font-body, "Manrope Variable", system-ui, sans-serif);
   isolation: isolate;
   -webkit-tap-highlight-color: transparent;
 }
 
-.k-ad * {
+.k-ad *,
+.k-ad *::before,
+.k-ad *::after {
   box-sizing: border-box;
 }
 
-.k-bg {
+/* ---------- Padrão da marca (tom sobre tom) ---------- */
+.k-pattern {
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(120% 70% at 50% 38%, var(--k-graphite) 0%, var(--k-black) 62%),
-    var(--k-black);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;
 }
 
-/* ---------- Atmosfera ---------- */
-.k-particles span {
+.k-pattern__row {
+  flex: none;
+  height: calc(var(--kh) * 10);
+  overflow: hidden;
+}
+
+.k-pattern__row span {
+  display: block;
+  width: 400%;
+  height: 100%;
+  background-image: var(--k-pattern-img);
+  background-repeat: repeat-x;
+  background-size: auto 62%;
+  background-position: 0 50%;
+  opacity: 0.045;
+  will-change: transform;
+}
+
+/* ---------- Palco: mundo + figure ---------- */
+.k-stage {
   position: absolute;
-  width: 3px;
-  height: 3px;
+  inset: 0;
+  /* a câmera entra nos olhos da figure */
+  transform-origin: var(--cx) calc(var(--hb) - var(--H) * 0.33);
+  will-change: transform;
+}
+
+.k-world {
+  position: absolute;
+  z-index: 1;
+  left: calc(var(--cx) - var(--D) / 2);
+  top: calc(var(--cy) - var(--D) / 2);
+  width: var(--D);
+  height: var(--D);
   border-radius: 50%;
-  background: rgba(245, 245, 245, 0.7);
-  box-shadow: 0 0 6px rgba(245, 245, 245, 0.6);
-  opacity: 0;
-  will-change: transform, opacity;
+  /* chapado, só um volume discreto vindo da mesma luz da figure */
+  background: radial-gradient(circle at 34% 30%, #ea2637 0%, var(--k-world) 48%, #c9172a 100%);
+  will-change: transform;
 }
 
-.k-particles span.is-red {
-  background: var(--k-red);
-  box-shadow: 0 0 8px var(--k-red);
-}
-
-.k-line {
+.k-orbit {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: 46%;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--k-red) 20%, #ff6170 50%, var(--k-red) 80%, transparent);
-  box-shadow: 0 0 18px 2px rgba(226, 27, 45, 0.7);
-  transform-origin: left center;
+  z-index: 0;
+  left: calc(var(--cx) - var(--D) * 0.78);
+  top: calc(var(--cy) - var(--D) * 0.2);
+  width: calc(var(--D) * 1.56);
+  height: calc(var(--D) * 0.4);
+  border: 1px solid rgba(243, 241, 236, 0.28);
+  border-radius: 50%;
+  transform: rotate(-12deg);
+}
+
+.k-orbit__moon {
+  position: absolute;
+  left: -5px;
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--k-paper);
+}
+
+.k-hero {
+  position: absolute;
+  z-index: 2;
+  left: calc(var(--cx) - var(--W) / 2);
+  top: calc(var(--hb) - var(--H));
+  width: var(--W);
+  height: var(--H);
+  will-change: transform;
+}
+
+.k-hero img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Sombra projetada no mundo: luz alta, vinda da esquerda. */
+.k-hero__shadow {
+  filter: brightness(0);
+  opacity: 0.26;
+  transform: translate(5%, 4%);
+}
+
+/* Fecha os vazados do desenho (olhos, contornos) com a cor do chão,
+   como na logo original: sem isso o vermelho apareceria pelos olhos. */
+.k-hero__fill {
+  position: absolute;
+  inset: 20% 9% 4%;
+  border-radius: 50% 50% 46% 46% / 42% 42% 58% 58%;
+  background: var(--k-ground);
+}
+
+.k-hero__silhouette {
+  filter: brightness(0);
   opacity: 0;
+}
+
+/* ---------- Katakana vertical ---------- */
+.k-kana {
+  position: absolute;
   z-index: 3;
-}
-
-.k-grain {
-  position: absolute;
-  inset: 0;
-  z-index: 6;
+  right: 14px;
+  top: calc(var(--k-top) + 4px);
+  margin: 0;
+  writing-mode: vertical-rl;
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Noto Sans CJK JP", "Yu Gothic", "Meiryo", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  color: rgba(243, 241, 236, 0.6);
   pointer-events: none;
-  opacity: 0.07;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
 }
 
-.k-vignette {
+/* ---------- Assinatura ---------- */
+.k-sign {
   position: absolute;
-  inset: 0;
-  z-index: 6;
-  pointer-events: none;
-  background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.75) 100%);
+  z-index: 4;
+  left: calc(var(--kw) * 6);
+  right: calc(var(--kw) * 6);
+  top: calc(var(--kh) * 64.5);
 }
 
-.k-bars span {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 6vh;
-  background: #000;
-  z-index: 7;
-  opacity: 0;
+.k-lockup {
+  margin: 0;
+  width: min(calc(var(--kw) * 88), calc(var(--kh) * 50));
 }
 
-.k-bars span:first-child {
-  top: 0;
+.k-mask {
+  display: block;
+  overflow: hidden;
 }
 
-.k-bars span:last-child {
-  bottom: 0;
+.k-mask + .k-mask {
+  margin-top: 2.2%;
+}
+
+.k-mask img {
+  display: block;
+  width: 100%;
+  height: auto;
+  will-change: transform;
+}
+
+.k-credit {
+  margin: clamp(12px, calc(var(--kh) * 1.8), 18px) 0 0;
+  max-width: 34ch;
+  font-size: clamp(0.82rem, calc(var(--kh) * 1.75), 0.98rem);
+  line-height: 1.45;
+  color: rgba(243, 241, 236, 0.66);
+}
+
+/* ---------- Botões (só com link configurado) ---------- */
+.k-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: clamp(14px, calc(var(--kh) * 2.2), 22px);
+}
+
+.k-cta a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 0 22px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.92rem;
+  text-decoration: none;
+  transition: transform 0.15s ease, background-color 0.2s ease, color 0.2s ease;
+}
+
+.k-cta__main {
+  background: var(--k-paper);
+  color: var(--k-ground);
+}
+
+.k-cta__alt {
+  border: 1px solid rgba(243, 241, 236, 0.4);
+  color: var(--k-paper);
+}
+
+.k-cta a:hover {
+  background: var(--k-world);
+  color: var(--k-paper);
+}
+
+.k-cta a:active {
+  transform: scale(0.97);
+}
+
+.k-cta a:focus-visible {
+  outline: 2px solid var(--k-paper);
+  outline-offset: 3px;
 }
 
 .k-fade {
@@ -106,435 +259,88 @@
   visibility: hidden;
 }
 
-/* ---------- Cenas ---------- */
-.k-scene {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  opacity: 0;
-  visibility: hidden;
-  will-change: transform, opacity;
-}
-
-.k-scene--s4 {
-  opacity: 1;
-  visibility: visible;
-}
-
-/* Texto: celular = embaixo, centralizado; desktop = à esquerda. */
-.k-copy {
-  position: absolute;
-  left: 20px;
-  right: 20px;
-  bottom: calc(var(--k-safe-bottom) + 5vh);
-  text-align: center;
-  display: grid;
-  gap: 0.15em;
-}
-
-.k-title {
-  margin: 0;
-  font-weight: 800;
-  font-size: clamp(1.9rem, 9.4vw, 5.6rem);
-  line-height: 0.98;
-  letter-spacing: -0.025em;
-  text-transform: uppercase;
-  text-wrap: balance;
-}
-
-.k-title.is-red {
-  color: var(--k-red);
-  text-shadow: 0 0 30px rgba(226, 27, 45, 0.35);
-}
-
-.ad-word {
-  display: inline-block;
-  overflow: hidden;
-  vertical-align: top;
-  padding-bottom: 0.06em;
-  margin-bottom: -0.06em;
-}
-
-.ad-word > span {
-  display: inline-block;
-  will-change: transform;
-}
-
-/* ---------- Figure ---------- */
-.k-figure {
-  --w: min(62vw, 36vh);
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(var(--k-safe-top) + 7vh);
-  margin: 0 auto;
-  width: var(--w);
-  will-change: transform;
-}
-
-.k-figure__halo {
-  position: absolute;
-  inset: -40% -60%;
-  z-index: -1;
-  pointer-events: none;
-}
-
-.k-figure--side .k-figure__halo {
-  background: radial-gradient(closest-side at 30% 45%, rgba(226, 27, 45, 0.45), transparent 75%);
-}
-
-.k-figure--top .k-figure__halo {
-  background: radial-gradient(closest-side at 50% 22%, rgba(245, 245, 245, 0.22), transparent 80%);
-}
-
-.k-figure__subject {
-  position: relative;
-  will-change: transform, opacity;
-}
-
-.k-figure__photo {
-  display: block;
-  width: 100%;
-  max-height: 58vh;
-  object-fit: contain;
-}
-
-.k-toy {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.k-toy__head {
-  display: block;
-  width: 100%;
-  height: auto;
-  position: relative;
-  z-index: 1;
-}
-
-.k-toy__body {
-  display: block;
-  width: 60%;
-  height: auto;
-  margin-top: -5%;
-}
-
-/* Luz lateral: um lado aceso, o outro some na escuridão. */
-.k-figure--side .k-toy__head {
-  -webkit-mask-image: linear-gradient(100deg, #000 30%, rgba(0, 0, 0, 0.22) 82%);
-  mask-image: linear-gradient(100deg, #000 30%, rgba(0, 0, 0, 0.22) 82%);
-}
-
-.k-figure--side .k-toy__rim {
-  stroke: var(--k-red);
-}
-
-/* Luz de cima. */
-.k-figure--top .k-toy__head {
-  -webkit-mask-image: linear-gradient(180deg, #000 25%, rgba(0, 0, 0, 0.3) 100%);
-  mask-image: linear-gradient(180deg, #000 25%, rgba(0, 0, 0, 0.3) 100%);
-}
-
-.k-figure--top .k-toy__rim {
-  stroke: rgba(245, 245, 245, 0.55);
-}
-
-.k-figure__base {
-  display: block;
-  width: 96%;
-  height: calc(var(--w) * 0.12);
-  margin: -2% auto 0;
-  border-radius: 50%;
-  background: radial-gradient(closest-side, #2a2a31 0%, #141418 70%, transparent 100%);
-  border-top: 1px solid rgba(226, 27, 45, 0.55);
-  box-shadow: 0 -6px 30px rgba(226, 27, 45, 0.25);
-}
-
-.k-figure--top .k-figure__base {
-  border-top-color: rgba(245, 245, 245, 0.35);
-  box-shadow: 0 -6px 30px rgba(245, 245, 245, 0.12);
-}
-
-/* ---------- Cena 3: caixas ---------- */
-.k-shelf {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(var(--k-safe-top) + 9vh);
-  display: flex;
-  justify-content: center;
-  overflow: visible;
-}
-
-.k-shelf__track {
-  display: flex;
-  gap: 5vw;
-  align-items: center;
-  will-change: transform;
-}
-
-.k-slot {
-  will-change: transform, opacity;
-}
-
-.k-box {
-  --bw: min(38vw, 24vh);
-  width: var(--bw);
-  height: calc(var(--bw) * 1.38);
-  display: flex;
-  flex-direction: column;
-  padding: calc(var(--bw) * 0.07);
-  gap: calc(var(--bw) * 0.05);
-  border-radius: 8px;
-  background: linear-gradient(170deg, #1d1d23, #0b0b0e 70%);
-  border: 1px solid rgba(245, 245, 245, 0.09);
-  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6);
-  opacity: 0.45;
-  transform: scale(0.9);
-}
-
-.k-slot:nth-child(2) .k-box {
-  opacity: 1;
-  transform: scale(1.06);
-  border-color: rgba(226, 27, 45, 0.45);
-  box-shadow:
-    0 30px 60px rgba(0, 0, 0, 0.6),
-    0 0 40px rgba(226, 27, 45, 0.25);
-}
-
-.k-box__brand {
-  font-weight: 800;
-  font-size: calc(var(--bw) * 0.1);
-  letter-spacing: 0.14em;
-  text-align: center;
-  color: var(--k-white);
-  border-bottom: 2px solid var(--k-red);
-  padding-bottom: 4%;
-}
-
-.k-box__window {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  background: radial-gradient(circle at 50% 30%, #2b2b33, #101014 75%);
-  box-shadow: inset 0 0 0 1px rgba(245, 245, 245, 0.08);
-  overflow: hidden;
-}
-
-.k-box__window img {
-  width: 78%;
-  height: auto;
-  max-height: 90%;
-  object-fit: contain;
-}
-
-.k-box__num {
-  font-size: calc(var(--bw) * 0.075);
-  letter-spacing: 0.2em;
-  color: rgba(245, 245, 245, 0.55);
-  text-align: right;
-}
-
-.k-sweep {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -35%;
-  width: 30%;
-  background: linear-gradient(100deg, transparent, rgba(245, 245, 245, 0.07), transparent);
-  pointer-events: none;
-}
-
-/* ---------- Cena 4: logo ---------- */
-.k-scene--s4 {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--k-safe-top) 20px var(--k-safe-bottom);
-}
-
-.k-bloom {
-  position: absolute;
-  left: 50%;
-  top: 46%;
-  width: 140vmax;
-  height: 140vmax;
-  margin: -70vmax 0 0 -70vmax;
-  background: radial-gradient(closest-side, rgba(226, 27, 45, 0.28), rgba(226, 27, 45, 0.08) 35%, transparent 65%);
-  pointer-events: none;
-}
-
-.k-s4__inner {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  gap: clamp(14px, 3vh, 26px);
-  text-align: center;
-  margin-bottom: 4vh;
-}
-
-.k-logo {
-  position: relative;
-  width: min(86vw, 760px);
-}
-
-.k-logo img {
-  display: block;
-  width: 100%;
-  height: auto;
-  filter: drop-shadow(0 0 24px rgba(245, 245, 245, 0.18));
-}
-
-.k-logo__shine {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  -webkit-mask-size: 100% 100%;
-  mask-size: 100% 100%;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  pointer-events: none;
-}
-
-.k-logo__glint {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -30%;
-  width: 26%;
-  background: linear-gradient(100deg, transparent, #fff 50%, transparent);
-}
-
-.k-tagline {
-  margin: 0;
-  font-weight: 700;
-  font-size: clamp(0.85rem, 3.6vw, 1.35rem);
-  letter-spacing: 0.42em;
-  margin-right: -0.42em;
-  color: var(--k-white);
-}
-
-.k-discover {
-  margin: 0;
-  font-weight: 800;
-  font-size: clamp(1rem, 4.4vw, 1.6rem);
-  letter-spacing: 0.06em;
-  color: var(--k-red);
-}
-
-/* ---------- Botões (só com link configurado) ---------- */
-.k-cta {
-  position: absolute;
-  z-index: 10;
-  left: 0;
-  right: 0;
-  bottom: calc(var(--k-safe-bottom) + 10px);
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-  padding: 0 20px;
-}
-
-.k-cta a {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 0 22px;
-  border-radius: 999px;
-  font-weight: 800;
-  font-size: 0.85rem;
-  letter-spacing: 0.12em;
-  text-decoration: none;
-  transition: transform 0.15s ease, background-color 0.2s ease;
-}
-
-.k-cta__main {
-  background: var(--k-white);
-  color: var(--k-black);
-  box-shadow: 0 0 0 0 rgba(245, 245, 245, 0.4);
-  animation: k-cta-pulse 2.8s ease-out infinite;
-}
-
-.k-cta__alt {
-  border: 1px solid rgba(245, 245, 245, 0.35);
-  color: var(--k-white);
-}
-
-.k-cta a:active {
-  transform: scale(0.96);
-}
-
-.k-cta__main:hover {
-  background: var(--k-red);
-  color: var(--k-white);
-}
-
-@keyframes k-cta-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(245, 245, 245, 0.35); }
-  70%, 100% { box-shadow: 0 0 0 14px rgba(245, 245, 245, 0); }
-}
-
-/* ---------- Telas largas: figure à direita, texto à esquerda ---------- */
+/* ---------- Horizontal: o mundo à direita, a assinatura à esquerda ---------- */
 @media (min-width: 820px) and (min-aspect-ratio: 1/1) {
-  .k-copy {
-    left: 7vw;
-    right: 48vw;
-    top: 50%;
+  .k-ad {
+    --D: calc(var(--kh) * 78);
+    --cx: calc(var(--kw) * 69);
+    --cy: calc(var(--kh) * 46);
+    --W: calc(var(--kh) * 56);
+    --hb: calc(var(--kh) * 82);
+  }
+
+  .k-pattern__row {
+    height: calc(var(--kh) * 12.5);
+  }
+
+  .k-sign {
+    top: 0;
+    bottom: var(--k-bottom);
+    left: calc(var(--kw) * 7);
+    right: auto;
+    width: min(calc(var(--kw) * 34), calc(var(--kh) * 58));
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .k-lockup {
+    width: 100%;
+  }
+
+  .k-kana {
+    right: calc(var(--kw) * 3);
+    top: calc(var(--kh) * 18);
+    font-size: 13px;
+  }
+}
+
+/* Celular em pé, mas baixo (ex.: 375x667): composição um pouco mais compacta
+   para a legenda não encostar na barra de contagem. */
+@media (max-height: 740px) and (max-aspect-ratio: 1/1) {
+  .k-ad {
+    --cy: calc(var(--kh) * 32);
+    --W: min(calc(var(--kw) * 78), calc(var(--kh) * 37));
+    --hb: calc(var(--kh) * 57.5);
+  }
+
+  .k-sign {
+    top: calc(var(--kh) * 60.5);
+  }
+
+  .k-lockup {
+    width: min(calc(var(--kw) * 88), calc(var(--kh) * 45));
+  }
+
+  .k-credit {
+    max-width: none;
+    font-size: 0.8rem;
+  }
+}
+
+/* Celular deitado / telas muito baixas */
+@media (max-height: 520px) and (min-aspect-ratio: 1/1) {
+  .k-ad {
+    --D: calc(var(--kh) * 74);
+    --cx: calc(var(--kw) * 68);
+    --cy: calc(var(--kh) * 42);
+    --W: calc(var(--kh) * 46);
+    --hb: calc(var(--kh) * 74);
+  }
+
+  .k-sign {
+    top: calc(var(--kh) * 18);
     bottom: auto;
-    transform: translateY(-50%);
-    text-align: left;
+    left: calc(var(--kw) * 6);
+    right: auto;
+    width: min(calc(var(--kw) * 40), calc(var(--kh) * 70));
   }
 
-  .k-title {
-    font-size: clamp(2.6rem, 5.4vw, 6rem);
+  .k-lockup {
+    width: 100%;
   }
 
-  .k-figure {
-    --w: min(30vw, 46vh);
-    left: auto;
-    right: 12vw;
-    top: 50%;
-    margin: calc(var(--w) * -0.78) 0 0;
-  }
-
-  .k-scene--s3 .k-copy {
-    top: auto;
-    bottom: calc(var(--k-safe-bottom) + 6vh);
-    left: 0;
-    right: 0;
-    transform: none;
-    text-align: center;
-  }
-
-  .k-scene--s3 .k-title {
-    font-size: clamp(2.2rem, 4.2vw, 4.6rem);
-  }
-
-  .k-shelf {
-    top: 10vh;
-  }
-
-  .k-box {
-    --bw: min(18vw, 28vh);
-  }
-}
-
-/* Telas baixas (celular deitado): figure e texto menores. */
-@media (max-height: 520px) {
-  .k-figure {
-    --w: min(30vw, 34vh);
-  }
-
-  .k-title {
-    font-size: clamp(1.6rem, 6vh, 3rem);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .k-cta__main {
-    animation: none;
+  .k-credit {
+    display: none;
   }
 }

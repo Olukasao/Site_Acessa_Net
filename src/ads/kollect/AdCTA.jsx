@@ -1,5 +1,5 @@
-// Botões de ação. Ficam fora da timeline: clicáveis do primeiro ao último segundo.
-// Sem `href` configurado não renderizam (nunca inventar link).
+// Botões de ação. Fora da timeline: clicáveis do primeiro ao último segundo.
+// Sem `href` configurado não aparecem (nunca inventar link).
 export default function AdCTA({ cta, instagram }) {
   const main = cta?.show && cta.href;
   const insta = instagram?.show && instagram.href;
@@ -9,7 +9,6 @@ export default function AdCTA({ cta, instagram }) {
       {main ? (
         <a className="k-cta__main" href={cta.href} target="_blank" rel="noopener noreferrer">
           {cta.label}
-          <span aria-hidden="true">→</span>
         </a>
       ) : null}
       {insta ? (

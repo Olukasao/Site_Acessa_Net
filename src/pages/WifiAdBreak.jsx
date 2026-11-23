@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { adSlots, totalAdSeconds } from "../ads/adsConfig";
+import { adSlots as allSlots } from "../ads/adsConfig";
 import "../ads/adBreak.css";
 
 // Tela entre o cadastro e a liberação: cada marca de adsConfig.js passa em tela
 // cheia, na sua vez. Ao fim de todas, libera sozinha (onDone).
 // O tempo é medido pelo relógio (Date.now), não por contagem de ticks: se o
 // aparelho atrasar os timers, a liberação não atrasa junto.
+// Na prévia (?previa=anuncios&marca=kollect) dá para ver uma marca só.
+function pickSlots() {
+  const params = new URLSearchParams(window.location.search);
+  const only = params.get("previa") === "anuncios" ? params.get("marca") : null;
+  const picked = only ? allSlots.filter((slot) => slot.id === only) : [];
+  return picked.length ? picked : allSlots;
+}
+
 export default function WifiAdBreak({ onDone }) {
+  const [adSlots] = useState(pickSlots);
+  const totalAdSeconds = useMemo(() => adSlots.reduce((sum, slot) => sum + slot.seconds, 0), [adSlots]);
   const startRef = useRef(Date.now());
   const doneRef = useRef(false);
   const [elapsed, setElapsed] = useState(0);
@@ -23,14 +33,14 @@ export default function WifiAdBreak({ onDone }) {
       acc += slot.seconds;
       return at;
     });
-  }, []);
+  }, [adSlots]);
 
   useEffect(() => {
     const tick = window.setInterval(() => {
       setElapsed(Math.min(totalAdSeconds, (Date.now() - startRef.current) / 1000));
     }, 200);
     return () => window.clearInterval(tick);
-  }, []);
+  }, [totalAdSeconds]);
 
   // Sem rolagem por baixo do anúncio.
   useEffect(() => {

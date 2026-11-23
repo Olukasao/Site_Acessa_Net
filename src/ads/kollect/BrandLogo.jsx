@@ -1,13 +1,16 @@
-// Logo da KOLLECT. O brilho passa só por dentro das letras: a própria logo
-// serve de máscara para a faixa de luz.
-export default function BrandLogo({ src, className = "" }) {
-  const mask = { WebkitMaskImage: `url(${src})`, maskImage: `url(${src})` };
+// Assinatura oficial empilhada como no key visual da marca:
+//   KOLLECT
+//   YOUR WORLD.
+// Cada linha nasce de dentro de uma máscara (sobe da linha de base).
+export default function BrandLogo({ logo, yourWorld, label }) {
   return (
-    <div className={`k-logo ${className}`}>
-      <img src={src} alt="KOLLECT" width="880" height="150" decoding="async" />
-      <span className="k-logo__shine" style={mask} aria-hidden="true">
-        <span className="k-logo__glint" />
+    <h2 className="k-lockup" aria-label={label}>
+      <span className="k-mask">
+        <img className="k-lockup__kollect" src={logo} alt="" width="1600" height="273" decoding="async" />
       </span>
-    </div>
+      <span className="k-mask">
+        <img className="k-lockup__world" src={yourWorld} alt="" width="1600" height="258" decoding="async" />
+      </span>
+    </h2>
   );
 }

@@ -1,125 +1,110 @@
 import { gsap } from "gsap";
 
-// Timeline única do comercial. Os tempos abaixo são em "segundos de roteiro"
-// (volta de 13 s); timeScale ajusta para a duração configurada.
+// Timeline única, em "segundos de roteiro" (volta de 13 s); timeScale ajusta.
 //
-//  0.0–2.2  Cena 1  linha vermelha, figure revelada pela luz lateral, "NÃO É APENAS UMA FIGURE."
-//  2.2–4.7  Cena 2  segunda figure com luz de cima, "É UMA HISTÓRIA." / "UMA PAIXÃO."
-//  4.7–8.3  Cena 3  montagem de caixas com movimento lateral, "SEU UNIVERSO. SUA COLEÇÃO."
-//  8.3–12.4 Cena 4  escurece, logo revelada com brilho, "BEYOND COLLECTING." / "DESCUBRA A KOLLECT."
-// 12.4–13.0 Cena 5  fade para preto: a volta seguinte começa do preto, sem corte.
+//  0.0–3.0  REVELAÇÃO   um ponto vermelho cresce até virar o mundo; a figure sobe
+//                       como silhueta preta contra ele; KOLLECT / YOUR WORLD nascem
+//                       das máscaras (marca legível antes de 2 s); a luz acende.
+//  3.0–6.2  UNIVERSO    o padrão da marca aparece e corre; câmera deriva em 2.5D
+//                       (mundo e figure em ritmos diferentes).
+//  6.2–9.2  IDENTIDADE  a assinatura sai; a câmera entra nos olhos da figure e volta.
+//  9.2–12.1 KOLLECT YOUR WORLD  a assinatura volta e o key visual fica parado.
+// 12.1–13.0 a luz apaga, o mundo volta a ser um ponto, fade para preto: a volta
+//           seguinte começa exatamente desse estado, sem corte.
 export const BASE_DURATION = 13;
-
-const words = (q, selector) => q(`${selector} .ad-word > span`);
 
 export function buildKollectTimeline(root, { duration = BASE_DURATION, loop = true, speed = 1 } = {}) {
   const q = gsap.utils.selector(root);
   const tl = gsap.timeline({ repeat: loop ? -1 : 0, defaults: { ease: "power3.out" } });
+  const lines = q(".k-mask img");
 
   // Estado inicial de cada volta.
-  tl.set(q(".k-scene"), { autoAlpha: 0, scale: 1 }, 0)
-    .set(q(".ad-word > span"), { yPercent: 115 }, 0)
-    .set(q(".k-fade"), { autoAlpha: 1 }, 0)
-    .set(q(".k-line"), { autoAlpha: 1, scaleX: 0 }, 0)
-    .set(q(".k-bars span"), { autoAlpha: 1, yPercent: 0 }, 0)
-    .set(q(".k-discover"), { autoAlpha: 0, y: 14 }, 0)
-    .set(q(".k-logo img"), { opacity: 0.8 }, 0);
+  tl.set(q(".k-fade"), { autoAlpha: 1 }, 0)
+    .set(q(".k-world"), { scale: 0.08, xPercent: 0 }, 0)
+    .set(q(".k-hero"), { yPercent: 10 }, 0)
+    .set(q(".k-hero__silhouette"), { opacity: 1 }, 0)
+    .set(q(".k-stage"), { scale: 1, xPercent: 0 }, 0)
+    .set(lines, { yPercent: 105 }, 0)
+    .set(q(".k-sign"), { autoAlpha: 1, y: 0 }, 0)
+    .set(q(".k-credit"), { autoAlpha: 0 }, 0)
+    .set([q(".k-pattern"), q(".k-orbit"), q(".k-kana")], { autoAlpha: 0 }, 0);
 
-  tl.to(q(".k-fade"), { autoAlpha: 0, duration: 0.6, ease: "power1.out" }, 0);
+  // REVELAÇÃO
+  tl.to(q(".k-fade"), { autoAlpha: 0, duration: 0.7, ease: "power1.out" }, 0)
+    .to(q(".k-world"), { scale: 1, duration: 1.9, ease: "expo.inOut" }, 0.15)
+    .to(q(".k-hero"), { yPercent: 0, duration: 2.6, ease: "power2.out" }, 0.35)
+    .to(lines[0], { yPercent: 0, duration: 0.9, ease: "power4.out" }, 1.05)
+    .to(lines[1], { yPercent: 0, duration: 0.9, ease: "power4.out" }, 1.4)
+    .to(q(".k-hero__silhouette"), { opacity: 0, duration: 0.9, ease: "power2.inOut" }, 2.1)
+    .to(q(".k-kana"), { autoAlpha: 1, duration: 0.8, ease: "power1.out" }, 2.5)
+    .to(q(".k-credit"), { autoAlpha: 1, duration: 0.6, ease: "power1.out" }, 2.6);
 
-  // ---- Cena 1 -----------------------------------------------------------
-  tl.to(q(".k-line"), { scaleX: 1, duration: 0.9, ease: "expo.inOut" }, 0.1)
-    .to(q(".k-line"), { autoAlpha: 0, duration: 0.7, ease: "power1.in" }, 1.1)
-    .set(q(".k-scene--s1"), { autoAlpha: 1 }, 0.3)
-    .fromTo(
-      q(".k-scene--s1 .k-figure__subject"),
-      { autoAlpha: 0, scale: 1.16, x: -24 },
-      { autoAlpha: 1, scale: 1, x: 0, duration: 1.8, ease: "power2.out" },
-      0.3
-    )
-    .fromTo(q(".k-scene--s1 .k-figure"), { scale: 1 }, { scale: 1.07, duration: 2.2, ease: "none" }, 0.3)
-    .fromTo(
-      q(".k-scene--s1 .k-figure__halo"),
-      { autoAlpha: 0, xPercent: -30 },
-      { autoAlpha: 1, xPercent: 0, duration: 1.4, ease: "power2.out" },
-      0.4
-    )
-    .fromTo(q(".k-scene--s1 .k-figure__base"), { autoAlpha: 0 }, { autoAlpha: 1, duration: 1 }, 0.6)
-    .to(words(q, ".k-t1"), { yPercent: 0, duration: 0.75, stagger: 0.08, ease: "power4.out" }, 0.8)
-    .to(q(".k-scene--s1"), { autoAlpha: 0, scale: 1.05, duration: 0.5, ease: "power2.in" }, 2.05);
+  // UNIVERSO
+  tl.to(q(".k-pattern"), { autoAlpha: 1, duration: 1.4, ease: "power1.inOut" }, 3.0)
+    .to(q(".k-orbit"), { autoAlpha: 1, duration: 1.2, ease: "power1.inOut" }, 3.2)
+    .to(q(".k-stage"), { scale: 1.04, xPercent: -2, duration: 3.2, ease: "sine.inOut" }, 3.0)
+    .to(q(".k-world"), { xPercent: 4, duration: 3.2, ease: "sine.inOut" }, 3.0);
 
-  // ---- Cena 2 -----------------------------------------------------------
-  tl.set(q(".k-scene--s2"), { autoAlpha: 1 }, 2.3)
-    .fromTo(
-      q(".k-scene--s2 .k-figure__subject"),
-      { autoAlpha: 0, y: 36, scale: 1.08 },
-      { autoAlpha: 1, y: 0, scale: 1, duration: 1.4, ease: "power2.out" },
-      2.3
-    )
-    .fromTo(q(".k-scene--s2 .k-figure"), { scale: 1.04 }, { scale: 1, duration: 2.4, ease: "none" }, 2.3)
-    .fromTo(
-      q(".k-scene--s2 .k-figure__halo"),
-      { autoAlpha: 0, yPercent: -25 },
-      { autoAlpha: 1, yPercent: 0, duration: 1.2, ease: "power2.out" },
-      2.35
-    )
-    .fromTo(q(".k-scene--s2 .k-figure__base"), { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.8 }, 2.5)
-    .to(words(q, ".k-t2a"), { yPercent: 0, duration: 0.7, stagger: 0.08, ease: "power4.out" }, 2.6)
-    .fromTo(q(".k-t2a"), { opacity: 1 }, { opacity: 0.38, duration: 0.5 }, 3.4)
-    .to(words(q, ".k-t2b"), { yPercent: 0, duration: 0.7, stagger: 0.1, ease: "power4.out" }, 3.4)
-    .to(q(".k-scene--s2"), { autoAlpha: 0, scale: 1.04, duration: 0.45, ease: "power2.in" }, 4.55);
+  // IDENTIDADE
+  tl.to(q(".k-sign"), { autoAlpha: 0, y: 18, duration: 0.5, ease: "power2.in" }, 6.2)
+    .to(q(".k-orbit"), { autoAlpha: 0, duration: 0.4 }, 6.2)
+    .to(q(".k-stage"), { scale: 1.7, xPercent: 0, duration: 1.5, ease: "power3.inOut" }, 6.3)
+    .to(q(".k-world"), { xPercent: 0, duration: 1.5, ease: "power3.inOut" }, 6.3)
+    .to(q(".k-stage"), { scale: 1, duration: 1.3, ease: "power3.inOut" }, 8.3);
 
-  // ---- Cena 3 -----------------------------------------------------------
-  tl.set(q(".k-scene--s3"), { autoAlpha: 1 }, 4.75)
-    .fromTo(
-      q(".k-slot"),
-      { autoAlpha: 0, y: 50, scale: 0.94 },
-      { autoAlpha: 1, y: 0, scale: 1, duration: 0.9, stagger: 0.12, ease: "power3.out" },
-      4.8
-    )
-    .fromTo(q(".k-shelf__track"), { xPercent: 9 }, { xPercent: -9, duration: 3.6, ease: "none" }, 4.75)
-    .fromTo(q(".k-sweep"), { xPercent: 0 }, { xPercent: 450, duration: 1.3, ease: "power2.inOut" }, 5.4)
-    .to(q(".k-sweep"), { xPercent: 0, duration: 1.3, ease: "power2.inOut" }, 6.9)
-    .to(words(q, ".k-t3a"), { yPercent: 0, duration: 0.7, stagger: 0.08, ease: "power4.out" }, 5.3)
-    .to(words(q, ".k-t3b"), { yPercent: 0, duration: 0.7, stagger: 0.08, ease: "power4.out" }, 5.9)
-    .to(q(".k-scene--s3"), { autoAlpha: 0, duration: 0.5, ease: "power2.in" }, 7.9);
+  // KOLLECT YOUR WORLD
+  tl.set(lines, { yPercent: 105 }, 9.1)
+    .set(q(".k-sign"), { autoAlpha: 1, y: 0 }, 9.1)
+    .set(q(".k-credit"), { autoAlpha: 0 }, 9.1)
+    .to(lines[0], { yPercent: 0, duration: 0.9, ease: "power4.out" }, 9.2)
+    .to(lines[1], { yPercent: 0, duration: 0.9, ease: "power4.out" }, 9.5)
+    .to(q(".k-orbit"), { autoAlpha: 1, duration: 0.8 }, 9.6)
+    .to(q(".k-credit"), { autoAlpha: 1, duration: 0.6, ease: "power1.out" }, 10.1);
 
-  // ---- Cena 4 -----------------------------------------------------------
-  tl.to(q(".k-bars span"), { yPercent: (i) => (i === 0 ? -100 : 100), duration: 0.8, ease: "power2.inOut" }, 8.2)
-    .set(q(".k-scene--s4"), { autoAlpha: 1 }, 8.4)
-    .fromTo(
-      q(".k-bloom"),
-      { autoAlpha: 0, scale: 0.35 },
-      { autoAlpha: 1, scale: 1, duration: 1.6, ease: "power2.out" },
-      8.45
-    )
-    .fromTo(
-      q(".k-logo"),
-      { autoAlpha: 0, scale: 0.9, y: 10 },
-      { autoAlpha: 1, scale: 1, y: 0, duration: 1.4, ease: "expo.out" },
-      8.8
-    )
-    .fromTo(q(".k-s4__inner"), { scale: 1 }, { scale: 1.04, duration: 3.6, ease: "none" }, 8.8)
-    .fromTo(q(".k-logo__glint"), { xPercent: 0 }, { xPercent: 520, duration: 1.1, ease: "power2.inOut" }, 9.8)
-    .to(q(".k-logo img"), { opacity: 1, duration: 0.5 }, 10.2)
-    .to(words(q, ".k-tagline"), { yPercent: 0, duration: 0.7, stagger: 0.07, ease: "power4.out" }, 10.0)
-    .to(q(".k-discover"), { autoAlpha: 1, y: 0, duration: 0.6 }, 10.6);
-
-  // ---- Cena 5: segura e volta ao preto --------------------------------------
-  tl.to(q(".k-fade"), { autoAlpha: 1, duration: 0.6, ease: "power1.in" }, BASE_DURATION - 0.6);
+  // Apaga a luz e fecha a volta
+  tl.to(q(".k-hero__silhouette"), { opacity: 1, duration: 0.5, ease: "power2.in" }, 12.0)
+    .to(lines, { yPercent: -105, duration: 0.5, ease: "power2.in", stagger: 0.06 }, 12.05)
+    .to(q(".k-credit"), { autoAlpha: 0, duration: 0.3 }, 12.05)
+    .to([q(".k-pattern"), q(".k-orbit"), q(".k-kana")], { autoAlpha: 0, duration: 0.5 }, 12.1)
+    .to(q(".k-world"), { scale: 0.08, duration: 0.8, ease: "expo.in" }, 12.1)
+    .to(q(".k-fade"), { autoAlpha: 1, duration: 0.5, ease: "power1.in" }, BASE_DURATION - 0.5);
 
   tl.timeScale((BASE_DURATION / Math.max(duration, 4)) * speed);
   return tl;
 }
 
-// Partículas: movimento contínuo e independente da timeline.
-export function startParticles(root) {
+// Movimento ambiente, independente da timeline: o padrão da marca corre em
+// faixas alternadas (como no key visual) e a lua dá voltas na órbita.
+export function startAmbient(root) {
   const q = gsap.utils.selector(root);
-  q(".k-particles span").forEach((dot, i) => {
-    const duration = 4 + (i % 5);
-    const delay = (i * 0.37) % 3;
-    // Sobe numa volta completa; acende e apaga no mesmo ritmo.
-    gsap.fromTo(dot, { y: 30 }, { y: -100 - (i % 4) * 25, duration, delay, repeat: -1, ease: "none" });
-    gsap.fromTo(dot, { opacity: 0 }, { opacity: 0.85, duration: duration / 2, delay, repeat: -1, yoyo: true, ease: "sine.inOut" });
+  q(".k-pattern__row span").forEach((strip, i) => {
+    const row = strip.parentElement;
+    // Largura exata de uma logo do padrão (62% da altura da faixa x proporção da logo).
+    const tile = row.clientHeight * 0.62 * (1600 / 273);
+    if (!tile) return;
+    const dir = i % 2 === 0 ? -1 : 1;
+    gsap.fromTo(
+      strip,
+      { x: dir < 0 ? 0 : -tile },
+      { x: dir < 0 ? -tile : 0, duration: 16 + (i % 3) * 4, ease: "none", repeat: -1 }
+    );
   });
+  // Lua percorrendo a elipse da órbita (a órbita fica atrás do mundo: na metade
+  // de trás da volta a lua some atrás do disco).
+  const orbit = q(".k-orbit")[0];
+  const moon = q(".k-orbit__moon")[0];
+  if (orbit && moon) {
+    const angle = { a: 0 };
+    gsap.to(angle, {
+      a: Math.PI * 2,
+      duration: 10,
+      ease: "none",
+      repeat: -1,
+      onUpdate: () => {
+        const rx = orbit.clientWidth / 2;
+        const ry = orbit.clientHeight / 2;
+        gsap.set(moon, { x: rx + rx * Math.cos(angle.a), y: ry + ry * Math.sin(angle.a) });
+      },
+    });
+  }
 }
