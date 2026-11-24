@@ -375,6 +375,40 @@ export class RouterManager {
     }
   }
 
+  /**
+   * Painel ao vivo para o funcionario (Workspace): descobre o roteador do contrato pelo SGP, entra com a credencial do cofre e DEVOLVE a
+   * sessao aberta (o navegador ja logado) em vez de sair. Quem chama e responsavel por chamar `close()`.
+   * A vez do roteador so e segurada durante o login; o painel aberto nao bloqueia a troca de Wi-Fi do cliente (que entra por cima).
+   */
+  async openPanelSession(contractId) {
+    const falha = (code, message, extra = {}) => Object.assign(new Error(message), { code, ...extra });
+    if (this.d.dryRun) throw falha("ROUTER_DRY_RUN", "agente em modo seguro");
+    const r = await this.resolve(contractId);
+    const stop = {
+      not_found: "CONTRACT_NOT_FOUND",
+      suspended: "CONTRACT_SUSPENDED",
+      canceled: "CONTRACT_CANCELED",
+      offline: "ROUTER_OFFLINE",
+      not_identified: "ROUTER_NOT_IDENTIFIED",
+      unsupported: "ROUTER_UNSUPPORTED",
+      unreachable: "ROUTER_UNREACHABLE",
+      requires_validation: "ROUTER_REQUIRES_VALIDATION"
+    }[r.outcome];
+    if (stop) throw falha(stop, `roteador indisponivel: ${r.outcome}`, { vendor: VENDOR_LABEL[r.vendor] ?? null, model: r.model ?? null });
+    if (r.adapter.support !== "supported") throw falha("ROUTER_REQUIRES_VALIDATION", "fabricante ainda nao validado", { vendor: VENDOR_LABEL[r.vendor] ?? null });
+    const credentials = this.d.credentials.get(r.vendor);
+    if (!credentials) throw falha("ROUTER_REQUIRES_VALIDATION", "sem credencial no cofre", { vendor: VENDOR_LABEL[r.vendor] ?? null });
+    const ctx = { baseUrl: r.baseUrl, credentials, http: routerHttp(r.baseUrl, { timeoutMs: this.d.routerTimeoutMs, pins: r.pins ?? [], anyCert: Boolean(r.anyCert) }) };
+    const session = await this.underRouterLock(r.conn.ip, () =>
+      withTimeout(r.adapter.authenticate(ctx), 70_000, "ROUTER_UNREACHABLE", "login").catch((error) => {
+        this.d.log?.warn?.(`[router-agent] painel: login ${r.vendor}: ${safeError(error)}`);
+        throw falha(error?.code === "ROUTER_UNREACHABLE" ? "ROUTER_UNREACHABLE" : "ROUTER_AUTH_FAILED", "login no painel falhou");
+      })
+    );
+    const close = () => withTimeout(r.adapter.closeSession(ctx, session), 25_000, "INTERNAL", "sair do painel").catch((error) => this.d.log?.warn?.(`[router-agent] painel ${r.vendor}: ${safeError(error, 120)}`));
+    return { vendor: r.vendor, vendorLabel: VENDOR_LABEL[r.vendor] ?? null, model: r.model ?? session.model ?? null, session, close };
+  }
+
   /** Conecta, autentica, executa e sempre encerra a sessao do painel. Tudo com prazo: nada fica preso. */
   async withRouter(r, fn, report) {
     const limiter = this.d.perVendor.get(r.vendor) ?? this.d.perVendor.get("*");

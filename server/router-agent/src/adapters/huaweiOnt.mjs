@@ -132,7 +132,8 @@ export async function shutdownBrowsers() {
 export async function reapBrowsers(maxAgeMs = MAX_CONTEXT_MS, { idleMs = BROWSER_IDLE_MS } = {}) {
   let reaped = 0;
   for (const [context, info] of [...liveContexts]) {
-    if (Date.now() - info.since < maxAgeMs) continue;
+    // painel aberto por um funcionario (Workspace) tem prazo proprio; so o encerramento do agente (maxAgeMs = 0) o fecha aqui
+    if (maxAgeMs > 0 && (info.keepAlive || Date.now() - info.since < maxAgeMs)) continue;
     liveContexts.delete(context);
     const sessao = liveSessions.get(context);
     if (sessao) await bound(logoutPanel(sessao, { abrirInicio: true }), 12_000); // sai do painel antes de encerrar
